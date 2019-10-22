@@ -29,14 +29,14 @@ https://www.kaggle.com/c/nfl-big-data-bowl-2020/data
 - `FieldPosition` - which side of the field the play is happening on
 - `HomeScoreBeforePlay` - home team score before play started 主队已经获得的比分
 - `VisitorScoreBeforePlay` - visitor team score before play started 客队已经获得的比分
-- `NflIdRusher` - the `NflId` of the rushing player
+- `NflIdRusher` - the `NflId` of the rushing player 进攻方持球选手ID
 - `OffenseFormation` - offense formation
-- `OffensePersonnel` - offensive team positional grouping
+- `OffensePersonnel` - offensive team positional grouping 进攻队员
 - `DefendersInTheBox` - number of defenders lined up near the line of scrimmage, spanning the width of the offensive line
-- `DefensePersonnel` - defensive team positional grouping
+- `DefensePersonnel` - defensive team positional grouping 防守队员
 - `PlayDirection` - direction the play is headed
-- `TimeHandoff` - UTC time of the handoff
-- `TimeSnap` - UTC time of the snap
+- `TimeHandoff` - UTC time of the  handoff 传球时间
+- `TimeSnap` - UTC time of the snap 发球的时间
 - **`Yards` - the yardage gained on the play (you are predicting this)** 得分
 - `PlayerHeight` - player height (ft-in)
 - `PlayerWeight` - player weight (lbs)

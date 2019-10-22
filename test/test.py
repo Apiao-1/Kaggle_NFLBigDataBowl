@@ -12,6 +12,7 @@ import keras
 
 from tqdm import tqdm_notebook
 import warnings
+import os
 
 warnings.filterwarnings('ignore')
 
@@ -80,11 +81,23 @@ def orientation_to_cat(x):
     except:
         return "nan"
 
+def get_data():
+    path = 'cache_%s_train.csv' % os.path.basename(__file__)
+
+    if os.path.exists(path):
+        data = pd.read_csv(path)
+        # print(len(data))
+    else:
+        # train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
+        data = preprocess(train)
+        data.to_csv(path, index=False)
+    return data
 
 def preprocess(train):
     ## GameClock
     train['GameClock_sec'] = train['GameClock'].apply(strtoseconds)
-    train["GameClock_minute"] = train["GameClock"].apply(lambda x: x.split(":")[0]).astype("object")
+    train["GameClock_minute"] = train["GameClock"].apply(lambda x: x.split(":")[0]).astype("object") #hour
 
     ## Height
     train['PlayerHeight_dense'] = train['PlayerHeight'].apply(
@@ -104,6 +117,7 @@ def preprocess(train):
     train["PlayerAge_ob"] = train['PlayerAge'].astype(np.int).astype("object")
 
     ## WindSpeed
+    # print(train['WindSpeed'].value_counts())
     train['WindSpeed_ob'] = train['WindSpeed'].apply(
         lambda x: x.lower().replace('mph', '').strip() if not pd.isna(x) else x)
     train['WindSpeed_ob'] = train['WindSpeed_ob'].apply(
@@ -186,10 +200,21 @@ def preprocess(train):
         by=['PlayId', 'IsRusherTeam', 'IsRusher']).reset_index(drop=True)
     return train
 
+def test(train):
+    # train = train[200]
+    # print(train["OffensePersonnel"].iloc[np.arange(0, len(train), 22)])
+    temp = train["OffensePersonnel"].iloc[np.arange(0, len(train), 22)].apply(
+        lambda x: pd.Series(OffensePersonnelSplit(x)))
+    temp.columns = ["Offense" + c for c in temp.columns]
+    print(temp)
+
 
 if __name__ == '__main__':
-    # train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
-    train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
-    # train = train[:2200]
+
+    # train = train[:200]
     # print(train.shape)# (509762, 49)
     # print(train.head())
+    train = get_data()
+    print(train.head())
+    # train = test(train)
+
