@@ -81,6 +81,7 @@ def orientation_to_cat(x):
     except:
         return "nan"
 
+
 def get_data():
     path = 'cache_%s_train.csv' % os.path.basename(__file__)
 
@@ -92,12 +93,80 @@ def get_data():
         train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
         data = preprocess(train)
         data.to_csv(path, index=False)
+
+    train = data  # 记得后期优化
+    ## DisplayName remove Outlier
+    v = train["DisplayName"].value_counts()
+    missing_values = list(v[v < 5].index)
+    train["DisplayName"] = train["DisplayName"].where(~train["DisplayName"].isin(missing_values), "nan") # 如果 cond 为真，保持原来的值，否则替换为other
+
+    ## PlayerCollegeName remove Outlier
+    v = train["PlayerCollegeName"].value_counts()
+    missing_values = list(v[v < 10].index)
+    train["PlayerCollegeName"] = train["PlayerCollegeName"].where(~train["PlayerCollegeName"].isin(missing_values),"nan")
+    # pd.to_pickle(train, "train.pkl")
+    drop(data)
+
+
+    cat_features = [] # 标签型的
+    dense_features = [] # 数值型的
+    for col in train.columns:
+        if train[col].dtype == 'object':
+            cat_features.append(col)
+            # print("*cat*", col, len(train[col].unique()))
+        else:
+            dense_features.append(col)
+            # print("!dense!", col, len(train[col].unique()))
+    dense_features.remove("PlayId")
+    dense_features.remove("Yards")
+
+    # categorical
+    train_cat = train[cat_features]
+    categories = []
+    most_appear_each_categories = {}
+    for col in tqdm_notebook(train_cat.columns):
+        train_cat.loc[:, col] = train_cat[col].fillna("nan")
+        train_cat.loc[:, col] = col + "__" + train_cat[col].astype(str)
+        most_appear_each_categories[col] = list(train_cat[col].value_counts().index)[0] # 取类别最多的
+        categories.append(train_cat[col].unique())
+    categories = np.hstack(categories) # 所有不同种类的类别
+    print(len(categories))
+
+    le = LabelEncoder()
+    le.fit(categories)
+    # Label Encode,转化为数字标签
+    for col in tqdm_notebook(train_cat.columns):
+        train_cat.loc[:, col] = le.transform(train_cat[col])
+    num_classes = len(le.classes_)
+    print(num_classes)
+
+    # Dense
+    train_dense = train[dense_features]
+    sss = {}
+    medians = {}
+    for col in tqdm_notebook(train_dense.columns):
+        medians[col] = np.nanmedian(train_dense[col]) # 忽略Nan值后的中位数
+        train_dense.loc[:, col] = train_dense[col].fillna(medians[col])
+        ss = StandardScaler()
+        train_dense.loc[:, col] = ss.fit_transform(train_dense[col].values[:, None])
+        sss[col] = ss
+
+
+
     return data
+
+def drop(train):
+    drop_cols = ["GameId", "GameWeather", "NflId", "Season", "NflIdRusher"]
+    drop_cols += ['TimeHandoff', 'TimeSnap', 'PlayerBirthDate']
+    drop_cols += ["Orientation", "Dir", 'WindSpeed', "GameClock"]
+    # drop_cols += ["DefensePersonnel","OffensePersonnel"]
+    train.drop(drop_cols, axis = 1, inplace=True)
+    return train
 
 def preprocess(train):
     ## GameClock
     train['GameClock_sec'] = train['GameClock'].apply(strtoseconds)
-    train["GameClock_minute"] = train["GameClock"].apply(lambda x: x.split(":")[0]).astype("object") #hour
+    train["GameClock_minute"] = train["GameClock"].apply(lambda x: x.split(":")[0]).astype("object")  # hour
 
     ## Height
     train['PlayerHeight_dense'] = train['PlayerHeight'].apply(
@@ -200,6 +269,7 @@ def preprocess(train):
         by=['PlayId', 'IsRusherTeam', 'IsRusher']).reset_index(drop=True)
     return train
 
+
 def test(train):
     # train = train[200]
     # print(train["OffensePersonnel"].iloc[np.arange(0, len(train), 22)])
@@ -210,11 +280,9 @@ def test(train):
 
 
 if __name__ == '__main__':
-
     # train = train[:200]
     # print(train.shape)# (509762, 49)
     # print(train.head())
     train = get_data()
     print(train.head())
     # train = test(train)
-
