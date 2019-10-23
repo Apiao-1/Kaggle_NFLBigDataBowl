@@ -14,8 +14,8 @@ https://www.kaggle.com/c/nfl-big-data-bowl-2020/data
 - `S` - speed in yards/second 此时的速度
 - `A` - acceleration in yards/second^2 加速度
 - `Dis` - distance traveled from prior time point, in yards
-- `Orientation` - orientation of player (deg) 运动员此时的朝向
-- `Dir` - angle of player motion (deg) 运动的方向
+- `Orientation` - orientation of player (deg) 玩家面对的方向
+- `Dir` - angle of player motion (deg) 玩家移动的方向
 - `NflId` - a unique identifier of the player 运动员ID
 - `DisplayName` - player's name 运动员name
 - `JerseyNumber` - jersey number 运动员号码
