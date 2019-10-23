@@ -151,9 +151,46 @@ def get_data():
         train_dense.loc[:, col] = ss.fit_transform(train_dense[col].values[:, None])
         sss[col] = ss
 
+    # Divide features into groups
 
+    ## dense features for play, 同一队伍里std为0即作为整个play的特征
+    dense_game_features = train_dense.columns[train_dense[:22].std() == 0]
+    ## dense features for each player
+    dense_player_features = train_dense.columns[train_dense[:22].std() != 0]
+    ## categorical features for play
+    cat_game_features = train_cat.columns[train_cat[:22].std() == 0]
+    ## categorical features for each player
+    cat_player_features = train_cat.columns[train_cat[:22].std() != 0]
+
+    #23170*5 ,23170*22 = 总数据量，这里已经做了压缩
+    train_dense_game = train_dense[dense_game_features].iloc[np.arange(0, len(train), 22)].reset_index(drop=True).values
+    ## with rusher player feature，22个人中只有一个是rusher，因此可以把rusher特征当成整个play的特征
+    train_dense_game = np.hstack([train_dense_game, train_dense[dense_player_features][train_dense["IsRusher"] > 0]])
+
+    train_dense_players = [train_dense[dense_player_features].iloc[np.arange(k, len(train), 22)].reset_index(drop=True) for k in range(22)]
+    train_dense_players = np.stack([t.values for t in train_dense_players]).transpose(1, 0, 2) # 通过transpose()函数改变了x的索引值为（1，0，2），对应（y，x，z）
+
+    train_cat_game = train_cat[cat_game_features].iloc[np.arange(0, len(train), 22)].reset_index(drop=True).values
+    train_cat_game = np.hstack(
+        [train_cat_game, train_cat[cat_player_features][train_dense["IsRusher"] > 0]])  ## with rusher player feature
+
+    train_cat_players = [train_cat[cat_player_features].iloc[np.arange(k, len(train), 22)].reset_index(drop=True) for k
+                         in range(22)]
+    train_cat_players = np.stack([t.values for t in train_cat_players]).transpose(1, 0, 2)
+
+    # 每场play对应一个yards
+    train_y_raw = train["Yards"].iloc[np.arange(0, len(train), 22)].reset_index(drop=True)
+    train_y = np.vstack(train_y_raw.apply(return_step).values)
+    # print(train_y)
 
     return data
+
+# 提交的作品将根据连续排列的概率分数(CRPS)进行评估。
+# 对于每个PlayId，您必须预测获得或丢失码数的累积概率分布。换句话说，您预测的每一列表示该队在比赛中获得<=那么多码的概率。
+def return_step(x):
+    temp = np.zeros(199)
+    temp[x + 99:] = 1
+    return temp
 
 def drop(train):
     drop_cols = ["GameId", "GameWeather", "NflId", "Season", "NflIdRusher"]
