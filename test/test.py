@@ -151,6 +151,11 @@ def get_data():
         train_dense.loc[:, col] = ss.fit_transform(train_dense[col].values[:, None])
         sss[col] = ss
 
+    return train_dense, train_cat, train, num_classes
+    # return data
+
+def get_NN_feature():
+    train_dense, train_cat, train, num_classes = get_data()
     # Divide features into groups
 
     ## dense features for play, 同一队伍里std为0即作为整个play的特征
@@ -182,8 +187,8 @@ def get_data():
     train_y_raw = train["Yards"].iloc[np.arange(0, len(train), 22)].reset_index(drop=True)
     train_y = np.vstack(train_y_raw.apply(return_step).values)
     # print(train_y)
+    return train_dense_game, train_dense_players, train_cat_game, train_cat_players, train_y_raw, train_y, num_classes
 
-    return data
 
 # 提交的作品将根据连续排列的概率分数(CRPS)进行评估。
 # 对于每个PlayId，您必须预测获得或丢失码数的累积概率分布。换句话说，您预测的每一列表示该队在比赛中获得<=那么多码的概率。
@@ -315,6 +320,62 @@ def test(train):
     temp.columns = ["Offense" + c for c in temp.columns]
     print(temp)
 
+
+def make_pred(test, sample, env, model):
+    test = preprocess(test)
+    test = drop(test)
+
+    ### categorical
+    test_cat = test[cat_features]
+    for col in (test_cat.columns):
+        test_cat.loc[:, col] = test_cat[col].fillna("nan")
+        test_cat.loc[:, col] = col + "__" + test_cat[col].astype(str)
+        isnan = ~test_cat.loc[:, col].isin(categories)
+        if np.sum(isnan) > 0:
+            #             print("------")
+            #             print("test have unseen label : col")
+            if not ((col + "__nan") in categories):
+                #                 print("not nan in train : ", col)
+                test_cat.loc[isnan, col] = most_appear_each_categories[col]
+            else:
+                #                 print("nan seen in train : ", col)
+                test_cat.loc[isnan, col] = col + "__nan"
+    for col in (test_cat.columns):
+        test_cat.loc[:, col] = le.transform(test_cat[col])
+
+    ### dense
+    test_dense = test[dense_features]
+    for col in (test_dense.columns):
+        test_dense.loc[:, col] = test_dense[col].fillna(medians[col])
+        test_dense.loc[:, col] = sss[col].transform(test_dense[col].values[:, None])
+
+    ### divide
+    test_dense_players = [test_dense[dense_player_features].iloc[np.arange(k, len(test), 22)].reset_index(drop=True) for
+                          k in range(22)]
+    test_dense_players = np.stack([t.values for t in test_dense_players]).transpose(1, 0, 2)
+
+    test_dense_game = test_dense[dense_game_features].iloc[np.arange(0, len(test), 22)].reset_index(drop=True).values
+    test_dense_game = np.hstack([test_dense_game, test_dense[dense_player_features][test_dense["IsRusher"] > 0]])
+
+    test_cat_players = [test_cat[cat_player_features].iloc[np.arange(k, len(test), 22)].reset_index(drop=True) for k in
+                        range(22)]
+    test_cat_players = np.stack([t.values for t in test_cat_players]).transpose(1, 0, 2)
+
+    test_cat_game = test_cat[cat_game_features].iloc[np.arange(0, len(test), 22)].reset_index(drop=True).values
+    test_cat_game = np.hstack([test_cat_game, test_cat[cat_player_features][test_dense["IsRusher"] > 0]])
+
+    test_inp = [test_dense_game, test_dense_players, test_cat_game, test_cat_players]
+
+    ## pred
+    pred = 0
+    for model in models:
+        _pred = model.predict(test_inp)[0]
+        _pred = np.cumsum(_pred, axis=1)
+        pred += _pred
+    pred /= len(models)
+    pred = np.clip(pred, 0, 1)
+    env.predict(pd.DataFrame(data=pred, columns=sample.columns))
+    return pred
 
 if __name__ == '__main__':
     # train = train[:200]
