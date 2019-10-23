@@ -15,7 +15,6 @@ import warnings
 import os
 
 warnings.filterwarnings('ignore')
-
 pd.set_option('expand_frame_repr', False)
 pd.set_option('display.max_rows', 200)
 pd.set_option('display.max_columns', 200)
