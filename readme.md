@@ -1,3 +1,5 @@
+NN：[0.01327098210632576, 0.01326919758365195, 0.013128513001616165, 0.013127182430660462, 0.013603459251823486]
+
 # EDA
 
 ### Data
@@ -54,3 +56,10 @@ https://www.kaggle.com/c/nfl-big-data-bowl-2020/data
 - `Humidity` - humidity 湿度
 - `WindSpeed` - wind speed in miles/hour
 - `WindDirection` - wind direction
+
+# Question
+1. play的特征和每个球员的特征如何统一进模型中
+    2. NN可以对不同size 的特征进行处理
+    1. play的特征中加入rusher的特征作为球员特征
+    3. play的特征中加入每一个球员的所有特征，不建议（球员特征多的时候*22 引入大量噪声）
+2. 多分类问题如何形成评价指标
