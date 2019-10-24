@@ -6,6 +6,7 @@ import os
 import time
 from concurrent.futures import ProcessPoolExecutor
 from math import ceil
+from matplotlib import pyplot
 
 from catboost import CatBoostClassifier
 from lightgbm import LGBMRegressor
@@ -25,7 +26,7 @@ cpu_jobs = os.cpu_count() - 1
 log = logger.get_logger()
 
 
-def fit_eval_metric(estimator, X, y, name=None):
+def fit_eval_metric(estimator, X, y, X_test, y_test, name=None):
     if name is None:
         name = estimator.__class__.__name__
 
@@ -33,7 +34,19 @@ def fit_eval_metric(estimator, X, y, name=None):
     #     estimator.fit(X, y, eval_metric='mae')
     # else:
     #     estimator.fit(X, y)
-    estimator.fit(X, y, eval_metric='mae')
+    estimator.fit(X, y, eval_set = [(X,y),(X_test,y_test)],early_stopping_rounds=100, eval_metric='mae')
+
+    # results = estimator.evals_result
+    # epochs = len(results['validation_0']['mae'])
+    # x_axis = range(0, epochs)
+    # plot log loss
+    # fig, ax = pyplot.subplots()
+    # ax.plot(x_axis, results['validation_0']['mae'], label='Train')
+    # ax.plot(x_axis, results['validation_1']['mae'], label='Test')
+    # ax.legend()
+    # pyplot.ylabel('mae')
+    # pyplot.title('lgbm mae')
+    # pyplot.show()
 
     return estimator
 
@@ -587,10 +600,10 @@ def train(clf):
     X_train = train_data.copy()
     y_train = X_train.pop('Yards')
 
-    clf = fit_eval_metric(clf, X_train, y_train)
-
     X_test = test_data.copy()
     y_test = X_test.pop('Yards')
+
+    clf = fit_eval_metric(clf, X_train, y_train, X_test, y_test)
 
     y_true, y_pred = y_test, clf.predict(X_test)
     # log += '%s\n' % classification_report(y_test, y_pred)
