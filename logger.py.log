@@ -1,0 +1,29 @@
+2019-10-24 19:12:55
+time: 0:00:48
+----------------------------------------------------
+lgb, learning_rate: 0.025, n_estimators: 360, num_leaves: 50, min_split_gain: 0.0, min_child_weight: 0.0010, min_child_samples: 21, subsample: 0.8, colsample_bytree: 0.8
+
+  mean_squared_error: 46.474405
+  mean_absolute_error: 3.747421
+  CRPS: 0.003960
+time: 0:00:06
+----------------------------------------------------
+lgb, learning_rate: 0.025, n_estimators: 360, num_leaves: 50, min_split_gain: 0.0, min_child_weight: 0.0010, min_child_samples: 21, subsample: 0.8, colsample_bytree: 0.8
+
+  mean_squared_error: 46.474405
+  mean_absolute_error: 3.747421
+  CRPS: 0.003960
+lgb, learning_rate: 0.025, n_estimators: 360, num_leaves: 50, min_split_gain: 0.0, min_child_weight: 0.0010, min_child_samples: 21, subsample: 0.8, colsample_bytree: 0.8
+
+  mean_squared_error: 46.474405
+  mean_absolute_error: 3.747421
+  CRPS: 0.003960
+time: 0:00:13
+----------------------------------------------------
+gbdt, learning_rate: 0.013, n_estimators: 700, max_depth: 3, min_samples_split: 190, min_samples_leaf: 70, subsample: 0.8
+
+  mean_squared_error: 55.745555
+  mean_absolute_error: 3.888486
+  CRPS: 0.004167
+time: 0:46:21
+----------------------------------------------------
