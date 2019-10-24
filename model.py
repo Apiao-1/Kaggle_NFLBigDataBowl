@@ -10,10 +10,10 @@ from matplotlib import pyplot
 
 from catboost import CatBoostClassifier
 from lightgbm import LGBMRegressor
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier
+from sklearn.ensemble import GradientBoostingClassifier,GradientBoostingRegressor, RandomForestClassifier, ExtraTreesClassifier
 from sklearn.externals import joblib
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold
+from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold, KFold, cross_val_score
 from sklearn.metrics import mean_squared_error,mean_absolute_error
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -26,7 +26,7 @@ cpu_jobs = os.cpu_count() - 1
 log = logger.get_logger()
 
 
-def fit_eval_metric(estimator, X, y, X_test, y_test, name=None):
+def fit_eval_metric(estimator, X, y, name=None, X_test = None, y_test = None):
     if name is None:
         name = estimator.__class__.__name__
 
@@ -34,8 +34,19 @@ def fit_eval_metric(estimator, X, y, X_test, y_test, name=None):
     #     estimator.fit(X, y, eval_metric='mae')
     # else:
     #     estimator.fit(X, y)
-    estimator.fit(X, y, eval_set = [(X,y),(X_test,y_test)],early_stopping_rounds=100, eval_metric='mae')
 
+    if X_test is None:
+        estimator.fit(X, y)
+    else:
+        # train_data, test_data = train_test_split(X,shuffle=True)
+        # X = train_data
+        # y = train_data.pop('Yards')
+        # X_test = test_data
+        # y_test = X_test.pop('Yards')
+        if name is 'XGBClassifier' or name is 'LGBMRegressor':
+            estimator.fit(X, y, eval_set = [(X,y),(X_test,y_test)],early_stopping_rounds=100)
+        else:
+            estimator.fit(X, y)
     # results = estimator.evals_result
     # epochs = len(results['validation_0']['mae'])
     # x_axis = range(0, epochs)
@@ -69,10 +80,10 @@ def grid_search(estimator, param_grid):
 
     estimator_name = estimator.__class__.__name__
     n_jobs = cpu_jobs
-    if estimator_name is 'XGBClassifier' or estimator_name is 'LGBMClassifier' or estimator_name is 'CatBoostClassifier':
-        n_jobs = 1
+    # if estimator_name is 'XGBClassifier' or estimator_name is 'LGBMClassifier' or estimator_name is 'CatBoostClassifier':
+    #     n_jobs = 1
 
-    clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring='mae', n_jobs=n_jobs,
+    clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring='neg_mean_absolute_error', n_jobs=n_jobs,
                        cv=5
                        )
 
@@ -104,7 +115,7 @@ def grid_search_auto(steps, params, estimator):
         print('---------------new grid search for all params------------------')
         # for循环调整各个参数达到局部最优
         for name, step in steps.items():
-            score = 0
+            score = -99999
 
             start = params[name] - step['step']
             if start <= step['min']:
@@ -160,19 +171,25 @@ def grid_search_auto(steps, params, estimator):
 def grid_search_gbdt(get_param=False):
     params = {
         # 10
-        'learning_rate': 1e-2,
-        'n_estimators': 1900,
-        'max_depth': 9,
-        'min_samples_split': 200,
-        'min_samples_leaf': 50,
-        'subsample': .8,
+        # 'learning_rate': 1e-2,
+        # 'n_estimators': 1900,
+        # 'max_depth': 9,
+        # 'min_samples_split': 200,
+        # 'min_samples_leaf': 50,
+        # 'subsample': .8,
 
         # 'learning_rate': 1e-1,
-        # 'n_estimators': 101,
+        # 'n_estimators': 150,
         # 'max_depth': 8,
         # 'min_samples_split': 200,
         # 'min_samples_leaf': 50,
         # 'subsample': .8,
+        'learning_rate': 0.0125,
+        'n_estimators': 700,
+        'max_depth': 3,
+        'min_samples_split': 190,
+        'min_samples_leaf': 70,
+        'subsample': .8,
 
         'random_state': 0
     }
@@ -181,14 +198,14 @@ def grid_search_gbdt(get_param=False):
         return params
 
     steps = {
-        'n_estimators': {'step': 100, 'min': 1, 'max': 'inf'},
+        'n_estimators': {'step': 50, 'min': 1, 'max': 'inf'},
         'max_depth': {'step': 1, 'min': 1, 'max': 'inf'},
-        'min_samples_split': {'step': 10, 'min': 2, 'max': 'inf'},
-        'min_samples_leaf': {'step': 10, 'min': 1, 'max': 'inf'},
-        'subsample': {'step': .1, 'min': .1, 'max': 1},
+        # 'min_samples_split': {'step': 10, 'min': 2, 'max': 'inf'},
+        # 'min_samples_leaf': {'step': 10, 'min': 1, 'max': 'inf'},
+        # 'subsample': {'step': .1, 'min': .1, 'max': 1},
     }
 
-    grid_search_auto(steps, params, GradientBoostingClassifier())
+    grid_search_auto(steps, params, GradientBoostingRegressor())
 
 
 def grid_search_xgb(get_param=False):
@@ -555,13 +572,8 @@ def train_et_entropy():
     return train_et(clf)
 
 
-def CRPS(y_train, y_valid_pred):
-    global log
-    y_true = np.zeros((y_train.shape[0], 199))
+def CRPS(y_valid_pred, y_train = None):
     y_pred = np.zeros((y_valid_pred.shape[0], 199))
-    if y_true.shape != y_pred.shape:
-        print("ERROR, y_true.shape != y_pred.shape:")
-        exit()
 
     for i, p in enumerate(np.round(y_valid_pred)):
         p += 99
@@ -570,6 +582,15 @@ def CRPS(y_train, y_valid_pred):
                 y_pred[i][j] = 1.0
             elif j >= p - 10:
                 y_pred[i][j] = (j + 10 - p) * 0.05
+    print(y_pred.shape)
+    if y_train is None:
+        return y_pred
+
+    global log
+    y_true = np.zeros((y_train.shape[0], 199))
+    if y_true.shape != y_pred.shape:
+        print("ERROR, y_true.shape != y_pred.shape:")
+        exit()
 
     for i, p in enumerate(y_train):
         p += 99
@@ -609,11 +630,12 @@ def train(clf):
     # log += '%s\n' % classification_report(y_test, y_pred)
     log += '  mean_squared_error: %f\n' % mean_squared_error(y_true, y_pred)
     # y_score = clf.predict_proba(X_test)[:, 1]  # 这里可以尝试用累加再截断，待测试
-    print(mean_squared_error(y_true, y_pred))
-    print(mean_absolute_error(y_true, y_pred))
-    # log += '  mean_absolute_error: %f\n' % mean_absolute_error(y_true, y_pred)
+    # print(mean_squared_error(y_true, y_pred))
+    # print(mean_absolute_error(y_true, y_pred))
+    log += '  mean_absolute_error: %f\n' % mean_absolute_error(y_true, y_pred)
 
-    y_pred = CRPS(y_true, y_pred)
+    # y_pred = CRPS(y_true, y_pred)
+    y_pred = CRPS(y_pred, y_true)
     print("y_pred.shape:", y_pred.shape)
 
     logger.set_logger(log)
@@ -630,6 +652,18 @@ def train(clf):
 #         fpr, tpr, thresholds = roc_curve(tmpdf['label'], tmpdf['pred'], pos_label=1)
 #         aucs.append(auc(fpr,tpr))
 #     return np.average(aucs)
+
+
+def local_cv_eval(model, k = 5):
+    data = feature.get_train_tree_data()
+    y = data.pop('Yards')
+    clf = eval('train_%s' % model)()
+
+    # losses = []
+    # models = []
+    for i in range(2):
+        scores_cv = cross_val_score(clf, data, y, scoring='mean_absolute_error',cv=k)
+        print("MAE: %0.2f (+/- %0.2f)" % (scores_cv.mean(), scores_cv.std() * 2))
 
 
 def predict(model):
@@ -769,7 +803,7 @@ if __name__ == '__main__':
     # feature_importance_score()
 
     # grid_search_gbdt()
-    # train_gbdt()
+    train_gbdt()
     # predict('gbdt')
 
     # grid_search_xgb()
@@ -777,7 +811,7 @@ if __name__ == '__main__':
     # predict('xgb')
 
     # grid_search_lgb()
-    train_lgb()
+    # train_lgb()
     # predict('lgb')
 
     # grid_search_cat()
@@ -805,7 +839,7 @@ if __name__ == '__main__':
 
     log += 'time: %s\n' % str((datetime.datetime.now() - start)).split('.')[0]
     log += '----------------------------------------------------\n'
-    # open('%s.log' % os.path.basename(__file__), 'a').write(log)
+    open('%s.log' % os.path.basename(__file__), 'a').write(log)
     print(log)
 
 '''

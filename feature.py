@@ -16,6 +16,7 @@ import warnings
 import os
 
 from NFLBigDataBowl import model_NN
+from NFLBigDataBowl import model
 from sklearn.model_selection import train_test_split, KFold
 
 
@@ -215,7 +216,7 @@ def preprocess(train):
     return train
 
 
-def split_dense_cat_feature(train):
+def split_dense_cat_feature(train, online = False):
     cat_features = []  # 标签型的
     dense_features = []  # 数值型的
     for col in train.columns:
@@ -226,7 +227,8 @@ def split_dense_cat_feature(train):
             dense_features.append(col)
             # print("!dense!", col, len(train[col].unique()))
     dense_features.remove("PlayId")
-    dense_features.remove("Yards")
+    if online == False:
+        dense_features.remove("Yards")
 
     # categorical
     train_cat = train[cat_features]
@@ -348,21 +350,20 @@ def get_train_tree_data():
 if __name__ == '__main__':
     init_setting()
 
-    train_x, train_y = get_train_tree_data()
+    lgb = model.train_lgb()
+    model.local_cv_eval(lgb)
 
-    losses = []
-    models = []
-    for k in range(1):
-        kfold = KFold(5, random_state=42 + k, shuffle=True)
-        for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(train_y)):
-            print("-----------")
-            print("-----------")
-            # model, loss = model_NN.train_and_get_model_NN(train_dense_game.value, train_dense_players, train_cat_game.value, train_cat_players,
-            #                         train_y_raw, train_y, num_classes_cat, tr_inds, val_inds, 32, 20)
-            model, loss = model_NN.lightGBM(train_x, train_y, tr_inds, val_inds)
-            models.append(model)
-            print(k_fold, loss)
-            losses.append(loss)
-    print("-------")
-    print(losses)
-    print(np.mean(losses))
+    # online submission
+    # for (test_df, sample_prediction_df) in tqdm.tqdm_notebook(env.iter_test()):
+    #     train = preprocess(test_df)
+    #     train_dense, train_cat, num_classes_cat = split_dense_cat_feature(train, online=True)
+    #     print(train_dense.shape, train_cat.shape, train.shape)  # (509762, 52) (509762, 19) (509762, 73)
+    #     train_dense_game, train_dense_players, train_cat_game, train_cat_players = get_NN_feature(train_dense, train_cat)
+    #     train_x_y = pd.concat([train_dense_game, train_cat_game], axis=1)
+    #     y_pred = lgb.predict(train_x_y)
+    #     y_pred = model.CRPS(y_pred)
+    #     env.predict(pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns))
+
+
+
+

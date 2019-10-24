@@ -12,6 +12,8 @@ import keras
 
 from tqdm import tqdm_notebook
 import warnings
+from sklearn.model_selection import GroupKFold,LeaveOneGroupOut,LeavePGroupsOut,GroupShuffleSplit # 分组分割
+
 import os
 
 warnings.filterwarnings('ignore')
@@ -380,6 +382,7 @@ if __name__ == '__main__':
     # train = train[:200]
     # print(train.shape)# (509762, 49)
     # print(train.head())
-    train = get_data()
-    print(train.head())
+    # train = get_data()
+    # print(train.head())
     # train = test(train)
+    print(1)

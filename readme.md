@@ -66,3 +66,4 @@ https://www.kaggle.com/c/nfl-big-data-bowl-2020/data
     1. 连续分级概率评分（Continuous Ranked Probability Score, CRPS），按CRPS评价概率模型所得的（优劣）结果与按MAE评价概率模型的数学期望所得的结果等价，train model时用mae
     2. https://baike.baidu.com/item/%E8%BF%9E%E7%BB%AD%E5%88%86%E7%BA%A7%E6%A6%82%E7%8E%87%E8%AF%84%E5%88%86/23690953?fr=aladdin
 3. play的数据量只有23171 * 72，会造成过拟合
+4. sklearn中的MAE是负值，原因：因为有些score是越大越好，比如roc_auc,但有些越小越好比如各种loss，为了统一，sklearn为最小化的值加了负号转化为最大化的问题，这里需要相应地修改网格里的初始化参数
