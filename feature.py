@@ -197,7 +197,8 @@ def preprocess(train):
     ## DisplayName remove Outlier
     v = train["DisplayName"].value_counts()
     missing_values = list(v[v < 5].index)
-    train["DisplayName"] = train["DisplayName"].where(~train["DisplayName"].isin(missing_values), "nan")  # 如果 cond 为真，保持原来的值，否则替换为other
+    train["DisplayName"] = train["DisplayName"].where(~train["DisplayName"].isin(missing_values),
+                                                      "nan")  # 如果 cond 为真，保持原来的值，否则替换为other
 
     ## PlayerCollegeName remove Outlier
     v = train["PlayerCollegeName"].value_counts()
@@ -271,27 +272,31 @@ def drop(train):
 
 def get_NN_feature(train_dense, train_cat):
     # Divide features into groups
-    ## dense features for play, 同一队伍里std为0即作为整个play的特征
+    ## dense features for play, 同一队伍里std为0即作为整个play的特征 (5,) ，如果是11则(11,)
     dense_game_features = train_dense.columns[train_dense[:22].std() == 0]
-    ## dense features for each player
+    ## dense features for each player (47,) 如果是11则(41,)
     dense_player_features = train_dense.columns[train_dense[:22].std() != 0]
-    ## categorical features for play
+    ## categorical features for play (14,) 如果是11则(15,)
     cat_game_features = train_cat.columns[train_cat[:22].std() == 0]
-    ## categorical features for each player
+    ## categorical features for each player (5,) 如果是11则(4,)
     cat_player_features = train_cat.columns[train_cat[:22].std() != 0]
 
     # 23170*5 ,23170*22 = 总数据量，这里已经做了压缩
-    train_dense_game = train_dense[dense_game_features].iloc[np.arange(0, len(train_dense), 22)].reset_index(drop=True).values
+    train_dense_game = train_dense[dense_game_features].iloc[np.arange(0, len(train_dense), 22)].reset_index(drop=True)
+    # train_dense_game = train_dense[dense_game_features].iloc[np.arange(0, len(train_dense), 22)].reset_index(drop=True).values
     ## with rusher player feature，22个人中只有一个是rusher，因此可以把rusher特征当成整个play的特征
-    train_dense_game = np.hstack([train_dense_game, train_dense[dense_player_features][train_dense["IsRusher"] > 0]])
+    train_dense_game = pd.concat([train_dense_game, train_dense[dense_player_features][train_dense["IsRusher"] > 0].reset_index(drop=True)], axis=1)
+    # train_dense_game = np.hstack([train_dense_game, train_dense[dense_player_features][train_dense["IsRusher"] > 0]])
 
     train_dense_players = [train_dense[dense_player_features].iloc[np.arange(k, len(train_dense), 22)].reset_index(drop=True)
                            for k in range(22)]
     train_dense_players = np.stack([t.values for t in train_dense_players]).transpose(1, 0, 2)  # 通过transpose()函数改变了x的索引值为（1，0，2），对应（y，x，z）
 
-    train_cat_game = train_cat[cat_game_features].iloc[np.arange(0, len(train_dense), 22)].reset_index(drop=True).values
-    train_cat_game = np.hstack(
-        [train_cat_game, train_cat[cat_player_features][train_dense["IsRusher"] > 0]])  ## with rusher player feature
+    train_cat_game = train_cat[cat_game_features].iloc[np.arange(0, len(train_dense), 22)].reset_index(drop=True)
+    # train_cat_game = train_cat[cat_game_features].iloc[np.arange(0, len(train_dense), 22)].reset_index(drop=True).values
+    train_cat_game = pd.concat(
+        [train_cat_game, train_cat[cat_player_features][train_dense["IsRusher"] > 0].reset_index(drop=True)], axis=1)  ## with rusher player feature
+        # [train_cat_game, train_cat[cat_player_features][train_dense["IsRusher"] > 0]])  ## with rusher player feature
 
     train_cat_players = [train_cat[cat_player_features].iloc[np.arange(k, len(train_dense), 22)].reset_index(drop=True) for k in range(22)]
     train_cat_players = np.stack([t.values for t in train_cat_players]).transpose(1, 0, 2)
@@ -299,13 +304,11 @@ def get_NN_feature(train_dense, train_cat):
 
 
 def get_train_label(train):
-    train_y_raw = train["Yards"].iloc[np.arange(0, len(train), 22)].reset_index(drop=True)
-    train_y = np.vstack(train_y_raw.apply(return_step).values)
-    return train_y_raw, train_y
+    train_y = train["Yards"].iloc[np.arange(0, len(train), 22)].reset_index(drop=True)
+    train_y_199 = np.vstack(train_y.apply(return_step).values)
+    return train_y, train_y_199
 
-
-if __name__ == '__main__':
-    init_setting()
+def get_train_NN_data():
     path = 'cache_%s_train.csv' % os.path.basename(__file__)
 
     if os.path.exists(path):
@@ -317,9 +320,35 @@ if __name__ == '__main__':
         train.to_csv(path, index=False)
 
     train_dense, train_cat, num_classes_cat = split_dense_cat_feature(train)
-    print(train_dense.shape, train_cat.shape, train.shape) # (509762, 52) (509762, 19) (509762, 73)
+    print(train_dense.shape, train_cat.shape, train.shape)  # (509762, 52) (509762, 19) (509762, 73)
     train_dense_game, train_dense_players, train_cat_game, train_cat_players = get_NN_feature(train_dense, train_cat)
-    train_y_raw, train_y = get_train_label(train)
+    # print(train_dense_game.shape, train_dense_players.shape, train_cat_game.shape, train_cat_players.shape) # (23171, 52) (23171, 22, 47) (23171, 19) (23171, 22, 5)
+
+    train_y, train_y_199 = get_train_label(train)
+    # print(train_y_raw.shape, train_y.shape) # (23171,) (23171, 199)
+
+    return train_dense_game, train_dense_players, train_cat_game, train_cat_players, num_classes_cat, train_y, train_y_199
+
+
+def get_train_tree_data():
+    path = 'cache_tree_train.csv'
+
+    if os.path.exists(path):
+        train_x_y = pd.read_csv(path)
+        print("load train tree data from disk with shape: ", train_x_y.shape)
+    else:
+        train_dense_game, _, train_cat_game, _, _, train_y, train_y_199 = get_train_NN_data()
+        train_x_y = pd.concat([train_dense_game, train_cat_game, train_y], axis=1) # (23171, 71)
+        # train_x = pd.concat([train_dense_game, train_cat_game], axis=1, ignore_index=True) # (23171, 71)
+        # train_x = pd.merge(train_dense_game, train_cat_game, how='left', on='PlayId')
+        train_x_y.to_csv(path, index=False)
+
+    return train_x_y
+
+if __name__ == '__main__':
+    init_setting()
+
+    train_x, train_y = get_train_tree_data()
 
     losses = []
     models = []
@@ -328,8 +357,9 @@ if __name__ == '__main__':
         for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(train_y)):
             print("-----------")
             print("-----------")
-            model, loss = model_NN.train_and_get_model_NN(train_dense_game, train_dense_players, train_cat_game, train_cat_players,
-                                    train_y_raw, train_y, num_classes_cat, tr_inds, val_inds, 32, 20)
+            # model, loss = model_NN.train_and_get_model_NN(train_dense_game.value, train_dense_players, train_cat_game.value, train_cat_players,
+            #                         train_y_raw, train_y, num_classes_cat, tr_inds, val_inds, 32, 20)
+            model, loss = model_NN.lightGBM(train_x, train_y, tr_inds, val_inds)
             models.append(model)
             print(k_fold, loss)
             losses.append(loss)

@@ -8,17 +8,17 @@ from concurrent.futures import ProcessPoolExecutor
 from math import ceil
 
 from catboost import CatBoostClassifier
-from lightgbm import LGBMClassifier
+from lightgbm import LGBMRegressor
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier
 from sklearn.externals import joblib
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold
-from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
+from sklearn.metrics import mean_squared_error,mean_absolute_error
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from xgboost.sklearn import XGBClassifier
-from tianchi_o2o import feature
+from NFLBigDataBowl import feature
 from tianchi_o2o import logger
 
 cpu_jobs = os.cpu_count() - 1
@@ -29,10 +29,11 @@ def fit_eval_metric(estimator, X, y, name=None):
     if name is None:
         name = estimator.__class__.__name__
 
-    if name is 'XGBClassifier' or name is 'LGBMClassifier':
-        estimator.fit(X, y, eval_metric='auc')
-    else:
-        estimator.fit(X, y)
+    # if name is 'XGBClassifier' or name is 'LGBMRegressor':
+    #     estimator.fit(X, y, eval_metric='mae')
+    # else:
+    #     estimator.fit(X, y)
+    estimator.fit(X, y, eval_metric='mae')
 
     return estimator
 
@@ -45,19 +46,20 @@ def grid_search(estimator, param_grid):
     print(param_grid)
     print()
 
-    data = feature.get_train_data()
+    data = feature.get_train_tree_data()
 
-    data, _ = train_test_split(data, train_size=10000, random_state=0)
+    data, _ = train_test_split(data, random_state=0)
 
-    X = data.copy().drop(columns='Coupon_id')
-    y = X.pop('label')
+    # X = data.copy().drop(columns='Coupon_id')
+    X = data.copy()
+    y = X.pop('Yards')
 
     estimator_name = estimator.__class__.__name__
     n_jobs = cpu_jobs
     if estimator_name is 'XGBClassifier' or estimator_name is 'LGBMClassifier' or estimator_name is 'CatBoostClassifier':
         n_jobs = 1
 
-    clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring='roc_auc', n_jobs=n_jobs,
+    clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring='mae', n_jobs=n_jobs,
                        cv=5
                        )
 
@@ -268,7 +270,7 @@ def grid_search_lgb(get_param=False):
         'colsample_bytree': {'step': .1, 'min': .1, 'max': 1},
     }
 
-    grid_search_auto(steps, params, LGBMClassifier())
+    grid_search_auto(steps, params, LGBMRegressor())
 
 
 def grid_search_cat(get_param=False):
@@ -433,7 +435,7 @@ def train_lgb(model=False):
 
     params = grid_search_lgb(True)
 
-    clf = LGBMClassifier().set_params(**params)
+    clf = LGBMRegressor().set_params(**params)
 
     if model:
         return clf
@@ -540,53 +542,66 @@ def train_et_entropy():
     return train_et(clf)
 
 
+def CRPS(y_train, y_valid_pred):
+    global log
+    y_true = np.zeros((y_train.shape[0], 199))
+    y_pred = np.zeros((y_valid_pred.shape[0], 199))
+    if y_true.shape != y_pred.shape:
+        print("ERROR, y_true.shape != y_pred.shape:")
+        exit()
+
+    for i, p in enumerate(np.round(y_valid_pred)):
+        p += 99
+        for j in range(199):
+            if j >= p + 10:
+                y_pred[i][j] = 1.0
+            elif j >= p - 10:
+                y_pred[i][j] = (j + 10 - p) * 0.05
+
+    for i, p in enumerate(y_train):
+        p += 99
+        for j in range(199):
+            if j >= p:
+                y_true[i][j] = 1.0
+
+    crps = np.sum(np.power(y_pred - y_true, 2)) / (199 * (509762 // 22))
+    print("CRPS:", crps)
+    log += '  CRPS: %f\n' %  crps
+    return y_pred
+
 # train the model, clf = classifier分类器
 def train(clf):
     global log
 
-    data = feature.get_train_data()
+    data = feature.get_train_tree_data()
 
     train_data, test_data = train_test_split(data,
                                              # train_size=1000,
-                                             train_size=100000,
+                                             # train_size=100000,
                                              random_state=0,
-                                             # shuffle=True
+                                             shuffle=True
                                              )
 
-    _, test_data = train_test_split(data, random_state=0)
+    # _, test_data = train_test_split(data, random_state=0)
 
-    X_train = train_data.copy().drop(columns='Coupon_id')
-    y_train = X_train.pop('label')
+    X_train = train_data.copy()
+    y_train = X_train.pop('Yards')
 
     clf = fit_eval_metric(clf, X_train, y_train)
 
-    X_test = test_data.copy().drop(columns='Coupon_id')
-    y_test = X_test.pop('label')
+    X_test = test_data.copy()
+    y_test = X_test.pop('Yards')
 
     y_true, y_pred = y_test, clf.predict(X_test)
     # log += '%s\n' % classification_report(y_test, y_pred)
-    log += '  accuracy: %f\n' % accuracy_score(y_true, y_pred)
-    y_score = clf.predict_proba(X_test)[:, 1]
-    log += '       auc: %f\n' % roc_auc_score(y_true, y_score)
+    log += '  mean_squared_error: %f\n' % mean_squared_error(y_true, y_pred)
+    # y_score = clf.predict_proba(X_test)[:, 1]  # 这里可以尝试用累加再截断，待测试
+    print(mean_squared_error(y_true, y_pred))
+    print(mean_absolute_error(y_true, y_pred))
+    # log += '  mean_absolute_error: %f\n' % mean_absolute_error(y_true, y_pred)
 
-    # coupon average auc 最终的评价指标对每个优惠券coupon_id单独计算预测结果的AUC值
-    coupons = test_data.groupby('Coupon_id').size().reset_index(name='total')
-    aucs = []
-    for _, coupon in coupons.iterrows():
-        if coupon.total > 1:
-            X_test = test_data[test_data.Coupon_id == coupon.Coupon_id].copy()
-            X_test.drop(columns='Coupon_id', inplace=True)
-
-            # 需要去除那些只有一个标签的券，比如某张券全都是1或全都是0，这样的券无法计算AUC值
-            # 相比于召回率、精确率、F1值，数据类不平衡时，AUC表现更好。
-            if len(X_test.label.unique()) != 2:
-                continue
-
-            y_true = X_test.pop('label')
-            y_score = clf.predict_proba(X_test)[:, 1]
-            aucs.append(roc_auc_score(y_true, y_score))
-
-    log += 'coupon auc: %f\n\n' % np.mean(aucs)
+    y_pred = CRPS(y_true, y_pred)
+    print("y_pred.shape:", y_pred.shape)
 
     logger.set_logger(log)
 
@@ -647,7 +662,7 @@ def blending(predict_X=None):
     global log
     log += '\n'
 
-    X = feature.get_train_data().drop(columns='Coupon_id')
+    X = feature.get_train_tree_data()
     # X = X[:2000]
     y = X.pop('label')
 
@@ -733,13 +748,14 @@ def blending(predict_X=None):
 if __name__ == '__main__':
     start = datetime.datetime.now()
     print(start.strftime('%Y-%m-%d %H:%M:%S'))
+    # global log
     log = '%s\n' % start.strftime('%Y-%m-%d %H:%M:%S')
     cpu_jobs = os.cpu_count() - 1
     date_null = pd.to_datetime('1970-01-01', format='%Y-%m-%d')
 
     # feature_importance_score()
 
-    grid_search_gbdt()
+    # grid_search_gbdt()
     # train_gbdt()
     # predict('gbdt')
 
@@ -748,7 +764,7 @@ if __name__ == '__main__':
     # predict('xgb')
 
     # grid_search_lgb()
-    # train_lgb()
+    train_lgb()
     # predict('lgb')
 
     # grid_search_cat()
