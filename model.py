@@ -11,7 +11,6 @@ from matplotlib import pyplot
 from catboost import CatBoostClassifier
 from lightgbm import LGBMRegressor
 from sklearn.ensemble import GradientBoostingClassifier,GradientBoostingRegressor, RandomForestClassifier, ExtraTreesClassifier
-from sklearn.externals import joblib
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold, KFold, cross_val_score
 from sklearn.metrics import mean_squared_error,mean_absolute_error
@@ -20,7 +19,7 @@ import pandas as pd
 import numpy as np
 from xgboost.sklearn import XGBClassifier
 from NFLBigDataBowl import feature
-from tianchi_o2o import logger
+from NFLBigDataBowl import logger
 
 cpu_jobs = os.cpu_count() - 1
 log = logger.get_logger()

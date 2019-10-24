@@ -10,16 +10,22 @@ from keras.utils import plot_model
 import numpy as np
 from NFLBigDataBowl.test import test
 import tensorflow as tf
+import pandas as pd
+import os
+
 
 keras.backend.clear_session()
+cpu_jobs = os.cpu_count() - 1
+
 
 def crps(y_true, y_pred):
     loss = K.mean((K.cumsum(y_pred, axis=1) - y_true) ** 2)
     return loss
 
 
-def train_and_get_model_NN(train_dense_game, train_dense_players, train_cat_game, train_cat_players, train_y_raw, train_y,
-              num_classes, tr_inds, val_inds, batch_size=32, epochs=10):
+def train_and_get_model_NN(train_dense_game, train_dense_players, train_cat_game, train_cat_players, train_y_raw,
+                           train_y,
+                           num_classes, tr_inds, val_inds, batch_size=32, epochs=10):
     ## model dense
     input_dense_game = keras.layers.Input(shape=(train_dense_game.shape[1],), name="numerical_game_feature_input")
     x1 = keras.layers.Dense(32, activation="relu", name="numerical_game_feature1")(input_dense_game)
@@ -102,20 +108,20 @@ def train_and_get_model_NN(train_dense_game, train_dense_players, train_cat_game
 
 
 # if __name__ == '__main__':
-    # train_dense_game, train_dense_players, train_cat_game, train_cat_players, train_y_raw, train_y, num_classes = test.get_NN_feature()
-    # losses = []
-    # models = []
-    # for k in range(2):
-    #     kfold = KFold(5, random_state=42 + k, shuffle=True)
-    #     for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(train_y)):
-    #         print("-----------")
-    #         print("-----------")
-    #         model, loss = get_model(train_dense_game, train_dense_players, train_cat_game, train_cat_players,
-    #                                 train_y_raw, train_y, num_classes, 32, 20)
-    #         models.append(model)
-    #         print(k_fold, loss)
-    #         losses.append(loss)
-    # print("-------")
-    # print(losses)
-    # print(np.mean(losses))
-    # plot_model(model, to_file='model.png')
+# train_dense_game, train_dense_players, train_cat_game, train_cat_players, train_y_raw, train_y, num_classes = test.get_NN_feature()
+# losses = []
+# models = []
+# for k in range(2):
+#     kfold = KFold(5, random_state=42 + k, shuffle=True)
+#     for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(train_y)):
+#         print("-----------")
+#         print("-----------")
+#         model, loss = get_model(train_dense_game, train_dense_players, train_cat_game, train_cat_players,
+#                                 train_y_raw, train_y, num_classes, 32, 20)
+#         models.append(model)
+#         print(k_fold, loss)
+#         losses.append(loss)
+# print("-------")
+# print(losses)
+# print(np.mean(losses))
+# plot_model(model, to_file='model.png')

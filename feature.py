@@ -18,7 +18,9 @@ import os
 from NFLBigDataBowl import model_NN
 from NFLBigDataBowl import model
 from sklearn.model_selection import train_test_split, KFold
+from NFLBigDataBowl import logger
 
+log = ''
 
 def init_setting():
     warnings.filterwarnings('ignore')
@@ -27,6 +29,8 @@ def init_setting():
     pd.set_option('display.max_columns', 200)
     sns.set_style('darkgrid')
     mpl.rcParams['figure.figsize'] = [15, 10]
+    global log
+    log = logger.init_logger()
 
 
 # 提交的作品将根据连续排列的概率分数(CRPS)进行评估。
@@ -95,7 +99,7 @@ def orientation_to_cat(x):
         return "nan"
 
 
-def preprocess(train):
+def preprocess(train, online = False):
     ## GameClock
     train['GameClock_sec'] = train['GameClock'].apply(strtoseconds)
     train["GameClock_minute"] = train["GameClock"].apply(lambda x: x.split(":")[0]).astype("object")  # hour
@@ -197,7 +201,9 @@ def preprocess(train):
 
     ## DisplayName remove Outlier
     v = train["DisplayName"].value_counts()
+    print(list(v[v < 5]))
     missing_values = list(v[v < 5].index)
+    print(missing_values)
     train["DisplayName"] = train["DisplayName"].where(~train["DisplayName"].isin(missing_values),
                                                       "nan")  # 如果 cond 为真，保持原来的值，否则替换为other
 
@@ -349,9 +355,18 @@ def get_train_tree_data():
 
 if __name__ == '__main__':
     init_setting()
+    train = pd.read_csv('data/train.csv', dtype={'WindSpeed': 'object'})
 
-    lgb = model.train_lgb()
-    model.local_cv_eval(lgb)
+    preprocess(train)
+    exit()
+
+    # lgb = model.train_lgb()
+    # model.local_cv_eval('lgb')
+
+    gbdt = model.train_gbdt()
+    model.local_cv_eval('gbdt')
+
+    # logger.save(log)
 
     # online submission
     # for (test_df, sample_prediction_df) in tqdm.tqdm_notebook(env.iter_test()):
