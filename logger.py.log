@@ -27,3 +27,22 @@ gbdt, learning_rate: 0.013, n_estimators: 700, max_depth: 3, min_samples_split: 
   CRPS: 0.004167
 time: 0:46:21
 ----------------------------------------------------
+lgb, learning_rate: 0.005, n_estimators: 10000, num_leaves: 50, min_split_gain: 0.0, min_child_weight: 0.0010, min_child_samples: 21, subsample: 0.8, colsample_bytree: 0.8
+
+  mean_squared_error: 47.503836
+  mean_absolute_error: 3.865442
+  CRPS: 0.004029
+time: 0:01:44
+----------------------------------------------------
+lgb, learning_rate: 0.005, n_estimators: 10000, num_leaves: 50, min_split_gain: 0.0, min_child_weight: 0.0010, min_child_samples: 21, subsample: 0.8, colsample_bytree: 0.8
+
+  mean_squared_error: 47.503836
+  mean_absolute_error: 3.865442
+  CRPS: 0.004029
+lgb, learning_rate: 0.005, n_estimators: 10000, num_leaves: 50, min_split_gain: 0.0, min_child_weight: 0.0010, min_child_samples: 21, subsample: 0.8, colsample_bytree: 0.8
+
+  mean_squared_error: 47.503836
+  mean_absolute_error: 3.865442
+  CRPS: 0.004029
+time: 0:03:31
+----------------------------------------------------

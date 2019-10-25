@@ -404,13 +404,12 @@ def online_submit(data, model):
 
 if __name__ == '__main__':
     init_setting()
-    train = pd.read_csv('data/train.csv', dtype={'WindSpeed': 'object'})
-
-    preprocess(train)
-    exit()
+    # train = pd.read_csv('data/train.csv', dtype={'WindSpeed': 'object'})
+    # preprocess(train)
+    # exit()
 
     lgb = model.train_lgb()
-    # model.local_cv_eval('lgb')
+    model.local_cv_eval('lgb')
 
     # gbdt = model.train_gbdt()
     # model.local_cv_eval('gbdt')

@@ -16,12 +16,17 @@ import datetime
 from sklearn.linear_model import LogisticRegression
 from scipy.stats import pearsonr
 import gc
-from sklearn.model_selection import TimeSeriesSplit
-from bayes_opt import BayesianOptimization
+import warnings
 
 
 # from kaggle.competitions import nflrush
 # env = nflrush.make_env()
+
+warnings.filterwarnings('ignore')
+pd.set_option('expand_frame_repr', False)
+pd.set_option('display.max_rows', 200)
+pd.set_option('display.max_columns', 200)
+
 def transform_time_quarter(str1):
     return int(str1[:2]) * 60 + int(str1[3:5])
 
@@ -199,10 +204,10 @@ if __name__ == '__main__':
         #                              colsample_bytree=0.7,learning_rate=0.005,importance_type = 'gain',
         #                      max_depth = -1, num_leaves = 100,min_child_samples=20,min_split_gain = 0.001,
         #                        bagging_freq=1,reg_alpha = 0,reg_lambda = 0,n_jobs = -1)
-        clf = lgb.LGBMRegressor(n_estimators=10000, random_state=47, learning_rate=0.005, importance_type='gain',
+        clf = lgb.LGBMRegressor(n_estimators=10000, random_state=0
+                                , learning_rate=0.005, importance_type='gain',
                                 n_jobs=-1, metric='mae')
-        clf.fit(X_train2, y_train2, eval_set=[(X_train2, y_train2), (X_test2, y_test2)], early_stopping_rounds=200,
-                verbose=50)
+        clf.fit(X_train2, y_train2, eval_set=[(X_train2, y_train2), (X_test2, y_test2)], early_stopping_rounds=200, verbose=False)
         models.append(clf)
         temp_predict = clf.predict(X_test2)
         stack_train[test_index] = temp_predict
@@ -224,28 +229,28 @@ if __name__ == '__main__':
     print('mean cprs:', resu2_cprs)
     print('oof cprs:', CRPS_pingyi1(stack_train, y_train, 4, cdf, dist_to_end_train))
 
-    for (test_df, sample_prediction_df) in env.iter_test():
-        test_df['own_field'] = (test_df['FieldPosition'] == test_df['PossessionTeam']).astype(int)
-        dist_to_end_test = test_df.apply(
-            lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
-        X_test = transform_test(test_df)
-        X_test.fillna(-999, inplace=True)
-        for f in X_test.columns:
-            if X_test[f].dtype == 'object':
-                X_test[f] = X_test[f].map(lambda x: x if x in set(X_train[f]) else -999)
-        for f in X_test.columns:
-            if X_test[f].dtype == 'object':
-                lbl = preprocessing.LabelEncoder()
-                lbl.fit(list(X_train[f]) + [-999])
-                X_test[f] = lbl.transform(list(X_test[f]))
-        pred_value = 0
-        for model in models:
-            pred_value += model.predict(X_test)[0] / 5
-        pred_data = list(get_score(pred_value, cdf, 4, dist_to_end_test.values[0]))
-        pred_data = np.array(pred_data).reshape(1, 199)
-        pred_target = pd.DataFrame(index=sample_prediction_df.index, columns=sample_prediction_df.columns,
-                                   # data = np.array(pred_data))
-                                   data=pred_data)
-        # print(pred_target)
-        env.predict(pred_target)
-    env.write_submission_file()
+    # for (test_df, sample_prediction_df) in env.iter_test():
+    #     test_df['own_field'] = (test_df['FieldPosition'] == test_df['PossessionTeam']).astype(int)
+    #     dist_to_end_test = test_df.apply(
+    #         lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
+    #     X_test = transform_test(test_df)
+    #     X_test.fillna(-999, inplace=True)
+    #     for f in X_test.columns:
+    #         if X_test[f].dtype == 'object':
+    #             X_test[f] = X_test[f].map(lambda x: x if x in set(X_train[f]) else -999)
+    #     for f in X_test.columns:
+    #         if X_test[f].dtype == 'object':
+    #             lbl = preprocessing.LabelEncoder()
+    #             lbl.fit(list(X_train[f]) + [-999])
+    #             X_test[f] = lbl.transform(list(X_test[f]))
+    #     pred_value = 0
+    #     for model in models:
+    #         pred_value += model.predict(X_test)[0] / 5
+    #     pred_data = list(get_score(pred_value, cdf, 4, dist_to_end_test.values[0]))
+    #     pred_data = np.array(pred_data).reshape(1, 199)
+    #     pred_target = pd.DataFrame(index=sample_prediction_df.index, columns=sample_prediction_df.columns,
+    #                                # data = np.array(pred_data))
+    #                                data=pred_data)
+    #     # print(pred_target)
+    #     env.predict(pred_target)
+    # env.write_submission_file()
