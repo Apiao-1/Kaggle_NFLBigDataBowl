@@ -660,7 +660,7 @@ def local_cv_eval(model, k = 5):
 
     # losses = []
     # models = []
-    for i in range(2):
+    for i in range(1):
         scores_cv = cross_val_score(clf, data, y, scoring='mean_absolute_error',cv=k)
         print("MAE: %0.2f (+/- %0.2f)" % (scores_cv.mean(), scores_cv.std() * 2))
 

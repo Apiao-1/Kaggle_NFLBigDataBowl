@@ -199,19 +199,8 @@ def preprocess(train, online = False):
     temp["PlayId"] = train["PlayId"].iloc[np.arange(0, len(train), 22)]
     train = train.merge(temp, on="PlayId")
 
-    ## DisplayName remove Outlier
-    v = train["DisplayName"].value_counts()
-    print(list(v[v < 5]))
-    missing_values = list(v[v < 5].index)
-    print(missing_values)
-    train["DisplayName"] = train["DisplayName"].where(~train["DisplayName"].isin(missing_values),
-                                                      "nan")  # 如果 cond 为真，保持原来的值，否则替换为other
-
-    ## PlayerCollegeName remove Outlier
-    v = train["PlayerCollegeName"].value_counts()
-    missing_values = list(v[v < 10].index)
-    train["PlayerCollegeName"] = train["PlayerCollegeName"].where(~train["PlayerCollegeName"].isin(missing_values),
-                                                                  "nan")
+    if(online == False):
+        train = filter_by_times(train)
 
     ## sort
     #     train = train.sort_values(by = ['X']).sort_values(by = ['Dis']).sort_values(by=['PlayId', 'Team', 'IsRusher']).reset_index(drop = True)
@@ -221,25 +210,41 @@ def preprocess(train, online = False):
     drop(train)
     return train
 
+def filter_by_times(train):
+    ## DisplayName remove Outlier
+    v = train["DisplayName"].value_counts()
+    missing_values = list(v[v < 5].index)
+    train["DisplayName"] = train["DisplayName"].where(~train["DisplayName"].isin(missing_values),"nan")  # 如果 cond 为真，保持原来的值，否则替换为other
 
+    ## PlayerCollegeName remove Outlier
+    v = train["PlayerCollegeName"].value_counts()
+    missing_values = list(v[v < 10].index)
+    train["PlayerCollegeName"] = train["PlayerCollegeName"].where(~train["PlayerCollegeName"].isin(missing_values),"nan")
+    return train
+
+cat_features = []  # 标签型的
+categories = []
+most_appear_each_categories = {}
+dense_features = []  # 数值型的
+le = LabelEncoder()
+sss = {}
+medians = {}
 def split_dense_cat_feature(train, online = False):
-    cat_features = []  # 标签型的
-    dense_features = []  # 数值型的
-    for col in train.columns:
-        if train[col].dtype == 'object':
-            cat_features.append(col)
-            # print("*cat*", col, len(train[col].unique()))
-        else:
-            dense_features.append(col)
-            # print("!dense!", col, len(train[col].unique()))
-    dense_features.remove("PlayId")
-    if online == False:
+    if (online == False):
+        for col in train.columns:
+            if train[col].dtype == 'object':
+                cat_features.append(col)
+                # print("*cat*", col, len(train[col].unique()))
+            else:
+                dense_features.append(col)
+                # print("!dense!", col, len(train[col].unique()))
         dense_features.remove("Yards")
 
+    dense_features.remove("PlayId")
+
     # categorical
+    global categories
     train_cat = train[cat_features]
-    categories = []
-    most_appear_each_categories = {}
     for col in tqdm_notebook(train_cat.columns):
         train_cat.loc[:, col] = train_cat[col].fillna("nan")
         train_cat.loc[:, col] = col + "__" + train_cat[col].astype(str)
@@ -248,7 +253,6 @@ def split_dense_cat_feature(train, online = False):
     categories = np.hstack(categories)  # 所有不同种类的类别
     print(len(categories))
 
-    le = LabelEncoder()
     le.fit(categories)
     # Label Encode,转化为数字标签
     for col in tqdm_notebook(train_cat.columns):
@@ -258,15 +262,13 @@ def split_dense_cat_feature(train, online = False):
 
     # Dense
     train_dense = train[dense_features]
-    sss = {}
-    medians = {}
     for col in tqdm_notebook(train_dense.columns):
         medians[col] = np.nanmedian(train_dense[col])  # 忽略Nan值后的中位数
         train_dense.loc[:, col] = train_dense[col].fillna(medians[col])
         ss = StandardScaler()
         train_dense.loc[:, col] = ss.fit_transform(train_dense[col].values[:, None])
         sss[col] = ss
-    return train_dense, train_cat, num_classes
+    return train_dense, train_cat, num_classes, cat_features ,dense_features
 
 
 def drop(train):
@@ -278,8 +280,10 @@ def drop(train):
     return train
 
 
-def get_NN_feature(train_dense, train_cat):
+dense_player_features = dense_game_features = cat_game_features = cat_player_features = []
+def divide_dense_cat_columns(train_dense, train_cat):
     # Divide features into groups
+    global dense_player_features,dense_game_features,cat_game_features,cat_player_features
     ## dense features for play, 同一队伍里std为0即作为整个play的特征 (5,) ，如果是11则(11,)
     dense_game_features = train_dense.columns[train_dense[:22].std() == 0]
     ## dense features for each player (47,) 如果是11则(41,)
@@ -289,6 +293,8 @@ def get_NN_feature(train_dense, train_cat):
     ## categorical features for each player (5,) 如果是11则(4,)
     cat_player_features = train_cat.columns[train_cat[:22].std() != 0]
 
+
+def get_NN_feature(train_dense, train_cat):
     # 23170*5 ,23170*22 = 总数据量，这里已经做了压缩
     train_dense_game = train_dense[dense_game_features].iloc[np.arange(0, len(train_dense), 22)].reset_index(drop=True)
     # train_dense_game = train_dense[dense_game_features].iloc[np.arange(0, len(train_dense), 22)].reset_index(drop=True).values
@@ -317,18 +323,20 @@ def get_train_label(train):
     return train_y, train_y_199
 
 def get_train_NN_data():
-    path = 'cache_%s_train.csv' % os.path.basename(__file__)
+    path = 'cache_feature_train.csv' # cache_NN
 
     if os.path.exists(path):
         train = pd.read_csv(path)
         # print(len(data))
     else:
-        train = pd.read_csv('data/train.csv', dtype={'WindSpeed': 'object'})
+        train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+        # train = pd.read_csv('data/train.csv', dtype={'WindSpeed': 'object'})
         train = preprocess(train)
         train.to_csv(path, index=False)
 
-    train_dense, train_cat, num_classes_cat = split_dense_cat_feature(train)
+    train_dense, train_cat, num_classes_cat,_ , _ = split_dense_cat_feature(train)
     print(train_dense.shape, train_cat.shape, train.shape)  # (509762, 52) (509762, 19) (509762, 73)
+    divide_dense_cat_columns(train_dense, train_cat)
     train_dense_game, train_dense_players, train_cat_game, train_cat_players = get_NN_feature(train_dense, train_cat)
     # print(train_dense_game.shape, train_dense_players.shape, train_cat_game.shape, train_cat_players.shape) # (23171, 52) (23171, 22, 47) (23171, 19) (23171, 22, 5)
 
@@ -353,6 +361,47 @@ def get_train_tree_data():
 
     return train_x_y
 
+# env = nflrush.make_env()
+# model = train_lgb()
+
+def online_submit(data, model):
+    test = preprocess(data, online=True)
+
+    ### categorical
+    test_cat = test[cat_features]
+    for col in (test_cat.columns):
+        test_cat.loc[:, col] = test_cat[col].fillna("nan")
+        test_cat.loc[:, col] = col + "__" + test_cat[col].astype(str)
+        isnan = ~test_cat.loc[:, col].isin(categories)
+        if np.sum(isnan) > 0:
+            if not ((col + "__nan") in categories):
+                test_cat.loc[isnan, col] = most_appear_each_categories[col]
+            else:
+                test_cat.loc[isnan, col] = col + "__nan"
+    for col in (test_cat.columns):
+        test_cat.loc[:, col] = le.transform(test_cat[col])
+
+    ### dense
+    test_dense = test[dense_features]
+    for col in (test_dense.columns):
+        test_dense.loc[:, col] = test_dense[col].fillna(medians[col])
+        test_dense.loc[:, col] = sss[col].transform(test_dense[col].values[:, None])
+
+    print(test_dense.shape, test_cat.shape, test.shape)
+
+    ### divide
+    train_dense_game, _, train_cat_game, _ = get_NN_feature(test_dense, test_cat)
+
+    print(train_dense_game.shape, train_cat_game.shape)
+    ## pred
+    train_x_y = pd.concat([train_dense_game, train_cat_game], axis=1)
+    y_pred = model.predict(train_x_y)
+    y_pred = CRPS(y_pred)
+    return pred
+
+# env.predict(pd.DataFrame(data=pred, columns=sample.columns))
+
+
 if __name__ == '__main__':
     init_setting()
     train = pd.read_csv('data/train.csv', dtype={'WindSpeed': 'object'})
@@ -360,11 +409,11 @@ if __name__ == '__main__':
     preprocess(train)
     exit()
 
-    # lgb = model.train_lgb()
+    lgb = model.train_lgb()
     # model.local_cv_eval('lgb')
 
-    gbdt = model.train_gbdt()
-    model.local_cv_eval('gbdt')
+    # gbdt = model.train_gbdt()
+    # model.local_cv_eval('gbdt')
 
     # logger.save(log)
 
