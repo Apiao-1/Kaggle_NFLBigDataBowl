@@ -13,7 +13,6 @@ import tensorflow as tf
 import pandas as pd
 import os
 
-
 keras.backend.clear_session()
 cpu_jobs = os.cpu_count() - 1
 
@@ -105,6 +104,88 @@ def train_and_get_model_NN(train_dense_game, train_dense_players, train_cat_game
               validation_data=(val_x, val_y))
     loss = model.history.history["val_out_soft_loss"][-1]
     return model, loss
+
+
+def train_and_get_model_NN2(train_dense_game, train_dense_players, train_cat_game, train_cat_players, train_y_raw,
+                            train_y,
+                            num_classes, tr_inds, val_inds, batch_size=32, epochs=10):
+    ## inputs
+    input_dense_game = keras.layers.Input(shape=(train_dense_game.shape[1],), name="numerical_general_inputs")
+    input_dense_players = keras.layers.Input(shape=(train_dense_players.shape[1], train_dense_players.shape[2]),
+                                             name="numerical_players_inputs")
+    input_cat_game = keras.layers.Input(shape=(train_cat_game.shape[1],), name="categorical_general_inputs")
+    input_cat_players = keras.layers.Input(shape=(train_cat_players.shape[1], train_cat_players.shape[2]),
+                                           name="categorical_players_input")
+
+    ## embedding
+    embedding = keras.layers.Embedding(num_classes, 4, embeddings_regularizer=regularizers.l2(1e-4))
+    emb_cat_game = embedding(input_cat_game)
+    emb_cat_game = keras.layers.Flatten()(emb_cat_game)
+    emb_cat_players = embedding(input_cat_players)
+    emb_cat_players = keras.layers.Reshape(
+        (int(emb_cat_players.shape[1]), int(emb_cat_players.shape[2]) * int(emb_cat_players.shape[3])))(
+        emb_cat_players)
+
+    ## general game features
+    game = keras.layers.Concatenate(name="general_features")([input_dense_game, emb_cat_game])
+    game = keras.layers.Dense(32, activation="relu")(game)
+    game = keras.layers.Dropout(0.5)(game)
+
+    ## players features
+    players = keras.layers.Concatenate(name="players_features")([input_dense_players, emb_cat_players])
+    n_unit = 16
+    players_aves = []
+    for k in range(3):
+        players = keras.layers.Dense(16, activation=None)(players)
+        players_aves.append(keras.layers.GlobalAveragePooling1D()(players))
+        players = keras.layers.Activation("relu")(players)
+    players = keras.layers.Concatenate(name="deep_players_features")(players_aves)
+    players = keras.layers.Dropout(0.5)(players)
+
+    ### concat all
+    x_concat = keras.layers.Concatenate(name="general_and_players")([game, players])
+    x_concats = []
+    n_unit = 128
+    decay_rate = 0.5
+    for k in range(3):
+        x_concat = keras.layers.Dense(n_unit, activation="relu")(x_concat)
+        x_concats.append(x_concat)
+        n_unit = int(n_unit * decay_rate)
+    x_concat = keras.layers.Concatenate(name="deep_features")(x_concats)
+    x_concat = keras.layers.Dropout(0.5)(x_concat)
+
+    ## concat
+    x_concat = keras.layers.Concatenate(name="all_concat")([game, players, x_concat])
+    out_soft = keras.layers.Dense(199, activation="softmax", name="out_soft")(x_concat)
+    out_reg = keras.layers.Dense(1, activation=None, name="out_reg")(x_concat)
+    model = keras.models.Model(inputs=[input_dense_game, input_dense_players, input_cat_game, input_cat_players],
+                               outputs=[out_soft, out_reg])
+
+    ## compile
+    model.compile(loss=[crps, keras.losses.mae],
+                  loss_weights=[1.0, 0.01],
+                  optimizer=keras.optimizers.Adam(learning_rate=0.002, decay=1e-4))
+
+    ## train
+    tr_x = [train_dense_game[tr_inds], train_dense_players[tr_inds], train_cat_game[tr_inds],
+            train_cat_players[tr_inds]]
+    tr_y = [train_y[tr_inds], train_y_raw[tr_inds] / 100]
+    val_x = [train_dense_game[val_inds], train_dense_players[val_inds], train_cat_game[val_inds],
+             train_cat_players[val_inds]]
+    val_y = [train_y[val_inds], train_y_raw[val_inds] / 100]
+    model.fit(tr_x,
+              tr_y,
+              batch_size=batch_size,
+              epochs=epochs,
+              verbose=1,
+              validation_data=(val_x, val_y))
+    loss = model.history.history["val_out_soft_loss"][-1]
+    '''
+    [0.013133516535162926, 0.013083921745419502, 0.013011788949370384, 0.01297429297119379, 0.01342478021979332, 0.01274262834340334, 0.013368395157158375, 0.012814179062843323, 0.013699916191399097, 0.012855546548962593]
+    0.013110896572470665
+    '''
+    return model, loss
+
 
 
 # if __name__ == '__main__':
