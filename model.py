@@ -43,6 +43,7 @@ def fit_eval_metric(estimator, X, y, name=None, X_test = None, y_test = None):
         # X_test = test_data
         # y_test = X_test.pop('Yards')
         if name is 'XGBClassifier' or name is 'LGBMRegressor':
+            print("early stopping")
             estimator.fit(X, y, eval_set = [(X,y),(X_test,y_test)],early_stopping_rounds=100)
         else:
             estimator.fit(X, y)
@@ -274,8 +275,8 @@ def grid_search_lgb(get_param=False):
         # 'subsample': .8,
         # 'colsample_bytree': .8,
 
-        'learning_rate': .025,
-        'n_estimators': 360,
+        'learning_rate': .005,
+        'n_estimators': 10000,
         'num_leaves': 50,
         'min_split_gain': 0,
         'min_child_weight': 1e-3,

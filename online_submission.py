@@ -21,6 +21,10 @@ import warnings
 from string import punctuation
 import re
 
+warnings.filterwarnings('ignore')
+pd.set_option('expand_frame_repr', False)
+pd.set_option('display.max_rows', 20)
+pd.set_option('display.max_columns', 200)
 
 # 提交的作品将根据连续排列的概率分数(CRPS)进行评估。
 # 对于每个PlayId，您必须预测获得或丢失码数的累积概率分布。换句话说，您预测的每一列表示该队在比赛中获得<=那么多码的概率。
@@ -73,7 +77,7 @@ def OffensePersonnelSplit(x):
 
 
 def DefensePersonnelSplit(x):
-    dic = {'DB': 0, 'DL': 0, 'LB': 0, 'OL': 0}
+    dic = {'DB': 0, 'DL': 0, 'LB': 0, 'OL': 0, 'QB': 0, 'RB': 0, 'TE': 0, 'WR': 0}
     for xx in x.split(","):
         xxs = xx.split(" ")
         dic[xxs[-1]] = int(xxs[-2])
@@ -160,6 +164,21 @@ def transform_StadiumType(txt):
     return np.nan
 
 
+def get_score(y_pred, cdf, w, dist_to_end):
+    y_pred = int(y_pred)
+    if y_pred == w:
+        y_pred_array = cdf.copy()
+    elif y_pred - w > 0:
+        y_pred_array = np.zeros(199)
+        y_pred_array[(y_pred - w):] = cdf[:(-(y_pred - w))].copy()
+    elif w - y_pred > 0:
+        y_pred_array = np.ones(199)
+        y_pred_array[:(y_pred - w)] = cdf[(w - y_pred):].copy()
+    y_pred_array[-1] = 1
+    y_pred_array[(dist_to_end + 99):] = 1
+    return y_pred_array
+
+
 def drop(train):
     # drop_cols += ["Orientation", "Dir"]
 
@@ -209,7 +228,7 @@ def preprocess(train):
     train['dist_to_end_train'] = train.apply(lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
     # ? https://www.kaggle.com/bgmello/neural-networks-feature-engineering-for-the-win
     train['dist_to_end_train'] = train.apply(lambda row: row['dist_to_end_train'] if row['PlayDirection'] else 100 - row['dist_to_end_train'],axis=1)
-    train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
+    # train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
 
     ## Rusher
     train['IsRusher'] = (train['NflId'] == train['NflIdRusher'])
@@ -335,17 +354,17 @@ def preprocess(train):
 # env = nflrush.make_env()
 
 if __name__ == '__main__':
-    warnings.filterwarnings('ignore')
-    pd.set_option('expand_frame_repr', False)
-    pd.set_option('display.max_rows', 20)
-    pd.set_option('display.max_columns', 200)
 
     # train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv',low_memory=False)
     train = pd.read_csv('data/train.csv')
     train = preprocess(train)
+    train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
 
     y_train = train.pop("Yards")
     X_train = train
+    # print(X_train.shape)
+    # print(X_train.columns)
+    # exit()
     cat_features = []
     for f in X_train.columns:
         if X_train[f].dtype == 'object':
@@ -383,11 +402,11 @@ if __name__ == '__main__':
         models.append(clf)
 
         # plot feature importance
-        fscores = pd.Series(clf.feature_importances_, X_train2.columns).sort_values(ascending=False)[:20]
-        fscores.plot(kind='bar', title='Feature Importance %d' % count, figsize=(20, 10))
-        count += 1
-        plt.ylabel('Feature Importance Score')
-        plt.show()
+        # fscores = pd.Series(clf.feature_importances_, X_train2.columns).sort_values(ascending=False)[:20]
+        # fscores.plot(kind='bar', title='Feature Importance %d' % count, figsize=(20, 10))
+        # count += 1
+        # plt.ylabel('Feature Importance Score')
+        # plt.show()
 
         temp_predict = clf.predict(X_test2)
         stack_train[test_index] = temp_predict
@@ -408,3 +427,26 @@ if __name__ == '__main__':
     print('oof mae:', mean_absolute_error(y_train, stack_train))
     print('mean cprs:', resu2_cprs)
     print('oof cprs:', CRPS_pingyi1(stack_train, y_train, 4, cdf, train['dist_to_end_train']))
+
+    # for (test_df, sample_prediction_df) in env.iter_test():
+    #     X_test = preprocess(test_df)
+    #     X_test.fillna(-999, inplace=True)
+    #     for f in X_test.columns:
+    #         if X_test[f].dtype == 'object':
+    #             X_test[f] = X_test[f].map(lambda x: x if x in set(X_train[f]) else -999)
+    #     for f in X_test.columns:
+    #         if X_test[f].dtype == 'object':
+    #             lbl = preprocessing.LabelEncoder()
+    #             lbl.fit(list(X_train[f]) + [-999])
+    #             X_test[f] = lbl.transform(list(X_test[f]))
+    #     pred_value = 0
+    #     for model in models:
+    #         pred_value += model.predict(X_test)[0] / 5
+    #     pred_data = list(get_score(pred_value, cdf, 4, X_test['dist_to_end_train'].values[0]))
+    #     pred_data = np.array(pred_data).reshape(1, 199)
+    #     pred_target = pd.DataFrame(index=sample_prediction_df.index, columns=sample_prediction_df.columns,
+    #                                # data = np.array(pred_data))
+    #                                data=pred_data)
+    #     # print(pred_target)
+    #     env.predict(pred_target)
+    # env.write_submission_file()
