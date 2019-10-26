@@ -20,6 +20,7 @@ from bayes_opt import BayesianOptimization
 import warnings
 from string import punctuation
 import re
+import math
 
 warnings.filterwarnings('ignore')
 pd.set_option('expand_frame_repr', False)
@@ -184,7 +185,7 @@ def drop(train):
 
     play_drop = ["GameId", 'PlayId', "TimeHandoff", "TimeSnap", "GameClock", "DefensePersonnel", "OffensePersonnel",
                  'FieldPosition', 'PossessionTeam', 'HomeTeamAbbr', 'VisitorTeamAbbr']
-    player_drop = ['DisplayName', 'PlayerBirthDate', "IsRusher", "NflId", "NflIdRusher"]
+    player_drop = ['DisplayName', 'PlayerBirthDate', "IsRusher", "NflId", "NflIdRusher","X","Y","Dir","Dir_rad","PlayDirection"]
     environment_drop = ["WindSpeed", "WindDirection", "Season", "GameWeather"]
     drop_cols = player_drop + play_drop + environment_drop
     train.drop(drop_cols, axis=1, inplace=True)
@@ -229,6 +230,15 @@ def preprocess(train):
     # ? https://www.kaggle.com/bgmello/neural-networks-feature-engineering-for-the-win
     train['dist_to_end_train'] = train.apply(lambda row: row['dist_to_end_train'] if row['PlayDirection'] else 100 - row['dist_to_end_train'],axis=1)
     # train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
+
+    # 统一进攻方向 https://www.kaggle.com/cpmpml/initial-wrangling-voronoi-areas-in-python
+    train['Dir_rad'] = np.mod(90 - train.Dir, 360) * math.pi / 180.0
+    train['X_std'] = train.X
+    train.loc[~train.PlayDirection, 'X_std'] = 120 - train.loc[~train.PlayDirection, 'X']
+    train['Y_std'] = train.Y
+    train.loc[~train.PlayDirection, 'Y_std'] = 160 / 3 - train.loc[~train.PlayDirection, 'Y']
+    train['Dir_std'] = train.Dir_rad
+    train.loc[~train.PlayDirection, 'Dir_std'] = np.mod(np.pi + train.loc[~train.PlayDirection, 'Dir_rad'], 2 * np.pi)
 
     ## Rusher
     train['IsRusher'] = (train['NflId'] == train['NflIdRusher'])
