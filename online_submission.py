@@ -362,9 +362,6 @@ if __name__ == '__main__':
 
     y_train = train.pop("Yards")
     X_train = train
-    # print(X_train.shape)
-    # print(X_train.columns)
-    # exit()
     cat_features = []
     for f in X_train.columns:
         if X_train[f].dtype == 'object':
