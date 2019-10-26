@@ -228,7 +228,7 @@ def preprocess(train):
     # 离自家球门的实际码线距离
     train['dist_to_end_train'] = train.apply(lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
     # ? https://www.kaggle.com/bgmello/neural-networks-feature-engineering-for-the-win
-    train['dist_to_end_train'] = train.apply(lambda row: row['dist_to_end_train'] if row['PlayDirection'] else 100 - row['dist_to_end_train'],axis=1)
+    # train['dist_to_end_train'] = train.apply(lambda row: row['dist_to_end_train'] if row['PlayDirection'] else 100 - row['dist_to_end_train'],axis=1)
     # train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
 
     # 统一进攻方向 https://www.kaggle.com/cpmpml/initial-wrangling-voronoi-areas-in-python
@@ -368,7 +368,8 @@ if __name__ == '__main__':
     # train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv',low_memory=False)
     train = pd.read_csv('data/train.csv')
     train = preprocess(train)
-    train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
+    # drop后 1358 -> 1276，但LB分变低了，感觉还是不能drop
+    # train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
 
     y_train = train.pop("Yards")
     X_train = train
