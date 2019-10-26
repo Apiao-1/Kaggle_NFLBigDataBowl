@@ -202,9 +202,14 @@ def preprocess(train):
     train['own_field'] = (train['FieldPosition'] == train['PossessionTeam']).astype(int)
     ## 主队持球或是客队持球
     train['process_type'] = (train['PossessionTeam'] == train['HomeTeamAbbr']).astype(int)
+
+    ## PlayDirection
+    train['PlayDirection'] = train['PlayDirection'].apply(lambda x: x.strip() == 'right')
     # 离自家球门的实际码线距离
-    train['dist_to_end_train'] = train.apply(
-        lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
+    train['dist_to_end_train'] = train.apply(lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
+    # ? https://www.kaggle.com/bgmello/neural-networks-feature-engineering-for-the-win
+    train['dist_to_end_train'] = train.apply(lambda row: row['dist_to_end_train'] if row['PlayDirection'] else 100 - row['dist_to_end_train'],axis=1)
+    train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
 
     ## Rusher
     train['IsRusher'] = (train['NflId'] == train['NflIdRusher'])
@@ -254,8 +259,6 @@ def preprocess(train):
     temp["PlayId"] = train["PlayId"]
     train = train.merge(temp, on="PlayId")
 
-    ## PlayDirection
-    train['PlayDirection'] = train['PlayDirection'].apply(lambda x: x.strip() == 'right')
 
     # train = pd.concat(
     #     [train.drop(['OffenseFormation'], axis=1), pd.get_dummies(train['OffenseFormation'], prefix='Formation')],

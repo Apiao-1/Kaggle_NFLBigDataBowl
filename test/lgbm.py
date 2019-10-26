@@ -141,7 +141,7 @@ if __name__ == '__main__':
     train['is_run'] = train.NflId == train.NflIdRusher
     train_single = train[train.is_run == True]
 
-    train_single['time_quarter'] = train_single.GameClock.map(lambda x: transform_time_quarter(x))
+    train_single['time_quarter'] = train_single.GameClock.map(lambda x: transform_time_quarter(x)) # 转化为minute
     train_single['time_end'] = train_single.apply(lambda x: transform_time_all(x.loc['GameClock'], x.loc['Quarter']),
                                                   axis=1)
 
@@ -154,24 +154,24 @@ if __name__ == '__main__':
     ###drop timehandoff
     ### drop timesnap
 
-    remove_features = ['GameId', 'PlayId', 'DisplayName', 'GameClock', 'TimeHandoff', 'TimeSnap']
-    train_single['date_game'] = train_single.GameId.map(lambda x: pd.to_datetime(str(x)[:8]))
+    # train_single['date_game'] = train_single.GameId.map(lambda x: pd.to_datetime(str(x)[:8]))
     train_single['runner_age'] = (train_single.date_game.map(pd.to_datetime) - train_single.PlayerBirthDate.map(
         pd.to_datetime)).map(lambda x: x.days) / 365
+    train_single['runner_height'] = train_single.PlayerHeight.map(transform_height)
+    train_single['own_field'] = (train_single['FieldPosition'] == train_single['PossessionTeam']).astype(int)
+    dist_to_end_train = train_single.apply(
+        lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
+
+    remove_features = ['GameId', 'PlayId', 'DisplayName', 'GameClock', 'TimeHandoff', 'TimeSnap']
     remove_features.append('HomeTeamAbbr')
     remove_features.append('VisitorTeamAbbr')
     remove_features.append('PlayerBirthDate')
     remove_features.append('is_run')
-
-    train_single['runner_height'] = train_single.PlayerHeight.map(transform_height)
     remove_features.append('PossessionTeam')
     remove_features.append('FieldPosition')
     remove_features.append('PlayerHeight')
     remove_features.append('NflIdRusher')
-    remove_features.append('date_game')
-    train_single['own_field'] = (train_single['FieldPosition'] == train_single['PossessionTeam']).astype(int)
-    dist_to_end_train = train_single.apply(
-        lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
+    # remove_features.append('date_game')
     remove_features.append('own_field')
     train_single.drop(remove_features, axis=1, inplace=True)
 
@@ -209,6 +209,13 @@ if __name__ == '__main__':
                                 n_jobs=-1, metric='mae')
         clf.fit(X_train2, y_train2, eval_set=[(X_train2, y_train2), (X_test2, y_test2)], early_stopping_rounds=200, verbose=False)
         models.append(clf)
+
+        # plot feature importance
+        fscores = pd.Series(clf.feature_importances_, X_train2.columns).sort_values(ascending=False)
+        fscores.plot(kind='bar', title='Feature Importance', figsize=(20, 10))
+        plt.ylabel('Feature Importance Score')
+        plt.show()
+
         temp_predict = clf.predict(X_test2)
         stack_train[test_index] = temp_predict
         ##y_pred += clf.predict(X_test)/5
@@ -229,28 +236,43 @@ if __name__ == '__main__':
     print('mean cprs:', resu2_cprs)
     print('oof cprs:', CRPS_pingyi1(stack_train, y_train, 4, cdf, dist_to_end_train))
 
-    # for (test_df, sample_prediction_df) in env.iter_test():
-    #     test_df['own_field'] = (test_df['FieldPosition'] == test_df['PossessionTeam']).astype(int)
-    #     dist_to_end_test = test_df.apply(
-    #         lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
-    #     X_test = transform_test(test_df)
-    #     X_test.fillna(-999, inplace=True)
-    #     for f in X_test.columns:
-    #         if X_test[f].dtype == 'object':
-    #             X_test[f] = X_test[f].map(lambda x: x if x in set(X_train[f]) else -999)
-    #     for f in X_test.columns:
-    #         if X_test[f].dtype == 'object':
-    #             lbl = preprocessing.LabelEncoder()
-    #             lbl.fit(list(X_train[f]) + [-999])
-    #             X_test[f] = lbl.transform(list(X_test[f]))
-    #     pred_value = 0
-    #     for model in models:
-    #         pred_value += model.predict(X_test)[0] / 5
-    #     pred_data = list(get_score(pred_value, cdf, 4, dist_to_end_test.values[0]))
-    #     pred_data = np.array(pred_data).reshape(1, 199)
-    #     pred_target = pd.DataFrame(index=sample_prediction_df.index, columns=sample_prediction_df.columns,
-    #                                # data = np.array(pred_data))
-    #                                data=pred_data)
-    #     # print(pred_target)
-    #     env.predict(pred_target)
-    # env.write_submission_file()
+    for (test_df, sample_prediction_df) in env.iter_test():
+        test_df['own_field'] = (test_df['FieldPosition'] == test_df['PossessionTeam']).astype(int)
+        dist_to_end_test = test_df.apply(
+            lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
+        X_test = transform_test(test_df)
+        X_test.fillna(-999, inplace=True)
+        for f in X_test.columns:
+            if X_test[f].dtype == 'object':
+                X_test[f] = X_test[f].map(lambda x: x if x in set(X_train[f]) else -999)
+        for f in X_test.columns:
+            if X_test[f].dtype == 'object':
+                lbl = preprocessing.LabelEncoder()
+                lbl.fit(list(X_train[f]) + [-999])
+                X_test[f] = lbl.transform(list(X_test[f]))
+        pred_value = 0
+        for model in models:
+            pred_value += model.predict(X_test)[0] / 5
+        pred_data = list(get_score(pred_value, cdf, 4, dist_to_end_test.values[0]))
+        pred_data = np.array(pred_data).reshape(1, 199)
+        pred_target = pd.DataFrame(index=sample_prediction_df.index, columns=sample_prediction_df.columns,
+                                   # data = np.array(pred_data))
+                                   data=pred_data)
+        # print(pred_target)
+        env.predict(pred_target)
+    env.write_submission_file()
+
+'''
+origin feature 0.1401
+0.013001089112151172
+0.012774237595900455
+0.012502848892604017
+0.01471511057621393
+0.01446121355298652
+mean mse: 38.54531286958517
+oof mse: 38.54531644457236
+mean mae: 3.5949338506770694
+oof mae: 3.59492419384407
+mean cprs: 0.013490899945971219
+oof cprs: 0.013490878807011579
+'''
