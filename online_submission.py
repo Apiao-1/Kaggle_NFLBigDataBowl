@@ -409,12 +409,12 @@ if __name__ == '__main__':
                 verbose=False)
         models.append(clf)
 
-        # plot feature importance
-        # fscores = pd.Series(clf.feature_importances_, X_train2.columns).sort_values(ascending=False)[:20]
-        # fscores.plot(kind='bar', title='Feature Importance %d' % count, figsize=(20, 10))
-        # count += 1
-        # plt.ylabel('Feature Importance Score')
-        # plt.show()
+        ## plot feature importance
+        fscores = pd.Series(clf.feature_importances_, X_train2.columns).sort_values(ascending=False)[:20]
+        fscores.plot(kind='bar', title='Feature Importance %d' % count, figsize=(20, 10))
+        count += 1
+        plt.ylabel('Feature Importance Score')
+        plt.show()
 
         temp_predict = clf.predict(X_test2)
         stack_train[test_index] = temp_predict
@@ -458,3 +458,18 @@ if __name__ == '__main__':
     #     # print(pred_target)
     #     env.predict(pred_target)
     # env.write_submission_file()
+
+'''
+[23171 rows x 56 columns]>
+0.013043294731681657
+0.012794710635750156
+0.012592832061690951
+0.014676284850886654
+0.014547147048300388
+mean mse: 38.846426675027004
+oof mse: 38.8464390302977
+mean mae: 3.6150459575447407
+oof mae: 3.615037035308653
+mean cprs: 0.013530853865661961
+oof cprs: 0.013530832823879818
+'''
