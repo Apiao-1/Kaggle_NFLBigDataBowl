@@ -896,7 +896,7 @@ if __name__ == '__main__':
     #
     #     y_pred_gp = np.zeros((test_df.shape[0], 199))
     #     ans = gp.GrabPredictions(scaled_basetable)
-    #     y_pred_gp[:, 96:96 + 20] = ans
+    #     y_pred_gp[:, 96:96 + 20] = ans # numpy才可以这样，pandas要用iloc
     #
     #     y_pred = (.6 * y_pred_nn + .4 * y_pred_gp)
     #     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]

@@ -374,6 +374,7 @@ if __name__ == '__main__':
     y_train = train.pop("Yards")
     X_train = train
     cat_features = []
+    dense_features = []
     for f in X_train.columns:
         if X_train[f].dtype == 'object':
             # print(f)
@@ -381,6 +382,8 @@ if __name__ == '__main__':
             lbl = preprocessing.LabelEncoder()
             lbl.fit(list(X_train[f]) + [-999])
             X_train[f] = lbl.transform(list(X_train[f]))
+        else:
+            dense_features.append(f)
 
     cdf = get_cdf_df(y_train).values.reshape(-1, )
 
