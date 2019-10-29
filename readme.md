@@ -23,6 +23,8 @@ https://www.kaggle.com/c/nfl-big-data-bowl-2020/data
 
 - `Dir` - angle of player motion (deg) 玩家移动的方向
 
+- ![img](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F75976%2F277b02ac1a245d56362715d8a550fb74%2Forientation.png?generation=1571665174994396&alt=media)
+
 - `NflId` - a unique identifier of the player 运动员ID
 
 - `DisplayName` - player's name 运动员name
@@ -79,11 +81,11 @@ https://www.kaggle.com/c/nfl-big-data-bowl-2020/data
 
 - `Position` - the player's position (the specific role on the field that they typically play)
 
-- `HomeTeamAbbr` - home team abbreviation
+- `HomeTeamAbbr` - home team abbreviation 主队缩写
 
 - `VisitorTeamAbbr` - visitor team abbreviation
 
-- `Week` - week into the season
+- `Week` - week into the season 赛季的第几周
 
 - `Stadium` - stadium where the game is being played
 

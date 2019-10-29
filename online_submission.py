@@ -2,8 +2,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from sklearn import preprocessing
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 import catboost as cb
 import lightgbm as lgb
 from sklearn.ensemble import RandomForestClassifier
@@ -26,6 +25,7 @@ warnings.filterwarnings('ignore')
 pd.set_option('expand_frame_repr', False)
 pd.set_option('display.max_rows', 20)
 pd.set_option('display.max_columns', 200)
+
 
 # 提交的作品将根据连续排列的概率分数(CRPS)进行评估。
 # 对于每个PlayId，您必须预测获得或丢失码数的累积概率分布。换句话说，您预测的每一列表示该队在比赛中获得<=那么多码的概率。
@@ -136,6 +136,7 @@ def CRPS_pingyi1(y_preds, y_trues, w, cdf, dist_to_ends):
         tmp.append(get_score_pingyi1(a, b, cdf, w, c))
     return np.mean(tmp)
 
+
 def clean_StadiumType(txt):
     if pd.isna(txt):
         return np.nan
@@ -180,17 +181,30 @@ def get_score(y_pred, cdf, w, dist_to_end):
     return y_pred_array
 
 
+def euclidean_distance(x1, y1, x2, y2):
+    x_diff = (x1 - x2) ** 2
+    y_diff = (y1 - y2) ** 2
+
+    return np.sqrt(x_diff + y_diff)
+
+def min_tackle_time(dist, v, a):
+    return (np.sqrt(v*v + 2 * a *dist) - v) / a
+
+
 def drop(train):
     # drop_cols += ["Orientation", "Dir"]
 
     play_drop = ["GameId", 'PlayId', "TimeHandoff", "TimeSnap", "GameClock", "DefensePersonnel", "OffensePersonnel",
-                 'FieldPosition', 'PossessionTeam', 'HomeTeamAbbr', 'VisitorTeamAbbr']
-    player_drop = ['DisplayName', 'PlayerBirthDate', "IsRusher", "NflId", "NflIdRusher","X","Y","Dir","Dir_rad","PlayDirection"]
-    environment_drop = ["WindSpeed", "WindDirection", "Season", "GameWeather"]
+                 'FieldPosition', 'PossessionTeam', 'HomeTeamAbbr', 'VisitorTeamAbbr',
+                 'HomeScoreBeforePlay','VisitorScoreBeforePlay','TeamOnOffense','Stadium']
+    player_drop = ['DisplayName', 'PlayerBirthDate', "IsRusher", "NflId", "NflIdRusher", "Dir",
+                   'Dir_rad', 'Ori_rad',"PlayDirection",'Orientation','Rusher_X','Rusher_Y',
+                   'dist_to_rusher','time_to_rusher']
+    environment_drop = ["WindSpeed", "WindDirection", "Season", "GameWeather",'Location','GameWeather_process',
+                        'Turf']
     drop_cols = player_drop + play_drop + environment_drop
     train.drop(drop_cols, axis=1, inplace=True)
     return train
-
 
 def preprocess(train):
     # fix some encode https://www.kaggle.com/bgmello/neural-networks-feature-engineering-for-the-win
@@ -219,26 +233,55 @@ def preprocess(train):
     # train['date_game'] = train_single.GameId.map(lambda x: pd.to_datetime(str(x)[:8]))
 
     ## play是否发生在控球方所在的半场
-    train['own_field'] = (train['FieldPosition'] == train['PossessionTeam']).astype(int)
+    train['own_field'] = (train['FieldPosition'].fillna('') == train['PossessionTeam']).astype(int)
     ## 主队持球或是客队持球
     train['process_type'] = (train['PossessionTeam'] == train['HomeTeamAbbr']).astype(int)
 
     ## PlayDirection
-    train['PlayDirection'] = train['PlayDirection'].apply(lambda x: x.strip() == 'right')
-    # 离自家球门的实际码线距离
-    train['dist_to_end_train'] = train.apply(lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
+    train['ToLeft'] = train.PlayDirection == "left"
+    # train['PlayDirection'] = train['PlayDirection'].apply(lambda x: x.strip() == 'right')
+
+    # 是否为防守方
+    train['TeamOnOffense'] = "home"
+    train.loc[train.PossessionTeam != train.HomeTeamAbbr, 'TeamOnOffense'] = "away"
+    train['IsOnOffense'] = train.Team == train.TeamOnOffense  # Is player on offense?
+
+    # 发球线离自家球门的实际码线距离
+    train['YardLine'] = train.apply(
+        lambda x: (x.loc['YardLine']) if x.loc['own_field'] == 1 else (100 - x.loc['YardLine']), axis=1)
+    # train['dist_to_end_train'] = train.apply(lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
     # ? https://www.kaggle.com/bgmello/neural-networks-feature-engineering-for-the-win
     # train['dist_to_end_train'] = train.apply(lambda row: row['dist_to_end_train'] if row['PlayDirection'] else 100 - row['dist_to_end_train'],axis=1)
     # train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
 
+
     # 统一进攻方向 https://www.kaggle.com/cpmpml/initial-wrangling-voronoi-areas-in-python
+    # https://www.kaggle.com/cpmpml/initial-wrangling-voronoi-areas-in-python?scriptVersionId=22014032
     train['Dir_rad'] = np.mod(90 - train.Dir, 360) * math.pi / 180.0
-    train['X_std'] = train.X
-    train.loc[~train.PlayDirection, 'X_std'] = 120 - train.loc[~train.PlayDirection, 'X']
-    train['Y_std'] = train.Y
-    train.loc[~train.PlayDirection, 'Y_std'] = 160 / 3 - train.loc[~train.PlayDirection, 'Y']
+    train['Ori_rad'] = np.mod(90 - train.Orientation, 360) * math.pi / 180.0
+    # train['X_std'] = train.X
+    train.loc[train.ToLeft, 'X'] = 120 - train.loc[train.ToLeft, 'X']
+    # train['Y_std'] = train.Y
+    train.loc[train.ToLeft, 'Y'] = 160 / 3 - train.loc[train.ToLeft, 'Y']
     train['Dir_std'] = train.Dir_rad
-    train.loc[~train.PlayDirection, 'Dir_std'] = np.mod(np.pi + train.loc[~train.PlayDirection, 'Dir_rad'], 2 * np.pi)
+    train['Ori_std'] = train.Ori_rad
+    train.loc[train.ToLeft, 'Dir_std'] = np.mod(np.pi + train.loc[train.ToLeft, 'Dir_rad'], 2 * np.pi)
+    train.loc[train.ToLeft, 'Ori_std'] = np.mod(np.pi + train.loc[train.ToLeft, 'Ori_rad'], 2 * np.pi)
+
+    # 离发球线距离x
+    train['dist_yardline'] = train['YardLine'] - train['X']/0.91
+
+    # 方向是否与进攻方向相同
+    train['is_Dir_back'] = train['Dir_rad'].apply(lambda x: 1 if (x > np.pi) else 0)
+    train['is_Ori_back'] = train['Ori_std'].apply(lambda x: 1 if (x > np.pi) else 0)
+    train['Dir_std'] = train['Dir_std'].apply(lambda x: np.mod(x, np.pi))
+    train['Ori_std'] = train['Ori_std'].apply(lambda x: np.mod(x, np.pi))
+
+    # 分方向的速度
+    train["Dir_std_sin"] = train["Dir_std"].apply(lambda x: np.sin(x))
+    train["Dir_std_cos"] = train["Dir_std"].apply(lambda x: np.cos(x))
+    train['S_horizontal'] = train['S'] * train['Dir_std_cos']
+    train['S_vertical'] = train['S'] * train['Dir_std_sin']
 
     ## Rusher
     train['IsRusher'] = (train['NflId'] == train['NflIdRusher'])
@@ -246,12 +289,61 @@ def preprocess(train):
     # temp = train[train["IsRusher"]][["Team", "PlayId"]].rename(columns={"Team": "RusherTeam"})
     # train = train.merge(temp, on="PlayId")
     # train["IsRusherTeam"] = train["Team"] == train["RusherTeam"]
-    train = train[train['IsRusher'] == True]  # 树模型中目前只处理rusher
+
+    # 球员距rusher的距离
+    tmp = train[train['IsRusher'] == True][['GameId', 'PlayId', 'X', 'Y']].copy().rename(columns={'X': 'Rusher_X',
+                                                                                                      'Y': 'Rusher_Y'})
+    train = pd.merge(train, tmp, on=['GameId', 'PlayId'], how='inner')
+    train['dist_to_rusher'] = train[['X', 'Y', 'Rusher_X', 'Rusher_Y']].apply(
+            lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
+
+    # 所有球员跑向rusher需要的时间,(假设rusher不动)
+    train['time_to_rusher'] = train[['X', 'Y','Rusher_X', 'Rusher_Y', 'S', 'A',]].apply(
+            lambda x: min_tackle_time(euclidean_distance(x[0], x[1], x[2], x[3]), x[4], x[5]), axis=1)
+    # train['time_to_rusher_Defend'] = train[train['IsOnOffense'] == False][['X', 'Y','Rusher_X', 'Rusher_Y', 'S', 'A',]].apply(
+    #         lambda x: min_tackle_time(euclidean_distance(x[0], x[1], x[2], x[3]), x[4], x[5]), axis=1)
+
+    # Rusher距QB的距离
+    QB_distance = train[train['Position'] == 'QB'][['dist_to_rusher','GameId','PlayId']].rename(columns={'dist_to_rusher':'dist_QB'})
+    train =  pd.merge(train, QB_distance, on=['GameId', 'PlayId'], how='inner')
+
+    # let's say now I want for that specific play to have as features the # of players within 3, 6, 9, 12, 15
+    # yards of distance from the runner. In that case, as I already have the distances from the runner to each of the 11 defense players, I will count how many of them are within each of these intervals, and return those.
+    # defense_x = train[train['IsOnOffense'] == False][['X','Rusher_X','GameId','PlayId']].apply
+
+    # 每个play对应两条,敌方球员距离，友方球员距离
+    Offense_player_distance = train[(train['IsOnOffense'] == True) & (train['dist_to_rusher'] > 0)].groupby(['GameId', 'PlayId'])\
+        .agg({'dist_to_rusher': ['min', 'max', 'mean', 'std'],
+              'X': ['mean', 'std'], 'Y': ['max','min','mean', 'std'],
+              'time_to_rusher':['mean','min']
+              }).rename(columns={
+        'min': 'Offense_min','max':'Offense_max','mean':'Offense_mean', 'std':'Offense_std'}).reset_index()
+    Defense_player_distance = train[train['IsOnOffense'] == False].groupby(['GameId', 'PlayId'])\
+        .agg({'dist_to_rusher': ['min', 'max', 'mean', 'std'],
+              'X':['mean','std'],'Y':['mean','std','max','min'],
+              'time_to_rusher':['mean','min']
+              }).reset_index() # min表示防守方跑的最快的球员跑到rusher的时间
+    Defense_player_distance['defense_y_spread'] = Defense_player_distance[('Y','max')] - Defense_player_distance[('Y','min')]
+    Offense_player_distance['offense_y_spread'] = Offense_player_distance[('Y','Offense_max')] - Offense_player_distance[('Y','Offense_min')]
+    player_distance = pd.merge(Offense_player_distance, Defense_player_distance, on=['GameId', 'PlayId'], how='inner')
+    train =  pd.merge(train, player_distance, on=['GameId', 'PlayId'], how='inner')
+
+    #closest defense player
+    closest_defense_player = train[(train['IsOnOffense'] == False) & (train[('dist_to_rusher', 'min')] == train['dist_to_rusher'])]
+    closest_defense_player = closest_defense_player[['GameId', 'PlayId', 'S','A', 'Dir_std', 'Ori_std', 'Dis']].rename(columns={
+        'S': 'closest_S','A':'closest_A','Dir_std':'closest_Dir', 'Ori_std':'closest_Ord', 'Dis':'closest_Dis'})
+    train =  pd.merge(train, closest_defense_player, on=['GameId', 'PlayId'], how='inner')
+    train['rusher_S_closet'] = train['S'] / train['closest_S']
+    train['rusher_A_closet'] = train['A'] / train['closest_A']
+    train.drop(['closest_S', 'closest_A'],axis = 1, inplace=True)
+
+    # 球员距发球线的距离
+    train['dist_to_yardline'] = train[['X','YardLine']].apply(lambda x: x[0] - x[1], axis=1)
 
     train['Team'] = train['Team'].apply(lambda x: x.strip() == 'home')
 
     ## diff Score
-    # train["diffScoreBeforePlay"] = train["HomeScoreBeforePlay"] - train["VisitorScoreBeforePlay"]
+    train["diffScoreBeforePlay"] = train["HomeScoreBeforePlay"] - train["VisitorScoreBeforePlay"]
     # train["diffScoreBeforePlay_binary_ob"] = (train["HomeScoreBeforePlay"] > train["VisitorScoreBeforePlay"]).astype("object")
 
     # ——————— player ———————
@@ -265,7 +357,8 @@ def preprocess(train):
     ## Height
     train['PlayerHeight'] = train['PlayerHeight'].apply(lambda x: 12 * int(x.split('-')[0]) + int(x.split('-')[1]))
     train['PlayerBMI'] = 703 * (train['PlayerWeight'] / (train['PlayerHeight']) ** 2)
-
+    print(2)
+    print(train.shape)
     ## Orientation and Dir
     # train["Orientation_ob"] = train["Orientation"].apply(lambda x: orientation_to_cat(x)).astype("object")
     # train["Dir_ob"] = train["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
@@ -276,18 +369,19 @@ def preprocess(train):
     # train["Dir_cos"] = train["Dir"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
 
     ## OffensePersonnel
-    temp = train["OffensePersonnel"].apply(lambda x: pd.Series(OffensePersonnelSplit(x)))
+    temp = train[train['IsRusher'] == True]["OffensePersonnel"].apply(lambda x: pd.Series(OffensePersonnelSplit(x)))
     temp.columns = ["Offense" + c for c in temp.columns]
     temp["PlayId"] = train["PlayId"]
     train = train.merge(temp, on="PlayId")
 
     ## DefensePersonnel
-    temp = train["DefensePersonnel"].apply(
+    temp = train[train['IsRusher'] == True]["DefensePersonnel"].apply(
         lambda x: pd.Series(DefensePersonnelSplit(x)))
     temp.columns = ["Defense" + c for c in temp.columns]
     temp["PlayId"] = train["PlayId"]
     train = train.merge(temp, on="PlayId")
-
+    print(2.1)
+    print(train.shape)
 
     # train = pd.concat(
     #     [train.drop(['OffenseFormation'], axis=1), pd.get_dummies(train['OffenseFormation'], prefix='Formation')],
@@ -336,26 +430,37 @@ def preprocess(train):
     train['StadiumType'] = train['StadiumType'].apply(transform_StadiumType)
 
     # ——————— after possess ———————
+    print(3)
+    print(train.shape)
 
     ## sort
-    train = train.sort_values(by=['X']).sort_values(by=['Dis']).sort_values(by=['PlayId']).reset_index(drop=True)
+    # train = train.sort_values(by=['X']).sort_values(by=['Dis']).sort_values(by=['PlayId']).reset_index(drop=True)
     # train = train.sort_values(by=['X']).sort_values(by=['Dis']).sort_values(by=['PlayId', 'IsRusherTeam', 'IsRusher']).reset_index(drop=True)
     # pd.to_pickle(train, "train.pkl")
 
     train.fillna(-999, inplace=True)
 
     ## dense -> categorical
-    # train["Quarter_ob"] = train["Quarter"].astype("object")
-    # train["Down_ob"] = train["Down"].astype("object")
+    train["Quarter"] = train["Quarter"].astype("object")
+    train["Down"] = train["Down"].astype("object")
     train["JerseyNumber"] = train["JerseyNumber"].astype("object")
+    train["OffenseFormation"] = train["OffenseFormation"].astype("object")
     # train["YardLine_ob"] = train["YardLine"].astype("object")
     # train["DefendersInTheBox_ob"] = train["DefendersInTheBox"].astype("object")
-    # train["Week_ob"] = train["Week"].astype("object")
+    train["Week"] = train["Week"].astype("object")
     # train["TimeDelta_ob"] = train["TimeDelta"].astype("object")
+    # train["HomeTeamAbbr"] = train["HomeTeamAbbr"].astype("object")
+    # train["VisitorTeamAbbr"] = train["VisitorTeamAbbr"].astype("object")
+
+    train = train[train['IsRusher'] == True]  # 树模型中目前只处理rusher
+
+    print(4)
+    print(train.shape)
 
     drop(train)
-    print(train.shape)
-    print(train.head)
+
+    print("feature process end,with feature shape:",train.shape)
+    # print(train)
 
     return train
 
@@ -366,7 +471,7 @@ def preprocess(train):
 if __name__ == '__main__':
 
     # train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv',low_memory=False)
-    train = pd.read_csv('data/train.csv')
+    train = pd.read_csv('data/train.csv')[:6600]
     train = preprocess(train)
     # drop后 1358 -> 1276，但LB分变低了，感觉还是不能drop
     # train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
@@ -375,15 +480,19 @@ if __name__ == '__main__':
     X_train = train
     cat_features = []
     dense_features = []
+    sss = {}
     for f in X_train.columns:
         if X_train[f].dtype == 'object':
             # print(f)
             cat_features.append((f, len(train[f].unique())))
-            lbl = preprocessing.LabelEncoder()
+            lbl = LabelEncoder()
             lbl.fit(list(X_train[f]) + [-999])
             X_train[f] = lbl.transform(list(X_train[f]))
         else:
+            ss = StandardScaler()
+            X_train.loc[:, f] = ss.fit_transform(X_train[f].values[:, None])
             dense_features.append(f)
+            sss[f] = ss
 
     cdf = get_cdf_df(y_train).values.reshape(-1, )
 
