@@ -152,7 +152,7 @@ def min_tackle_time(dist, v, a):
 def drop(train):
     # drop_cols += ["Orientation", "Dir"]
 
-    play_drop = ["GameId", 'PlayId', "TimeHandoff", "TimeSnap", "GameClock", "DefensePersonnel", "OffensePersonnel",
+    play_drop = ["JerseyNumber","GameId", 'PlayId', "TimeHandoff", "TimeSnap", "GameClock", "DefensePersonnel", "OffensePersonnel",
                  'FieldPosition', 'PossessionTeam', 'HomeTeamAbbr', 'VisitorTeamAbbr',
                  'HomeScoreBeforePlay', 'VisitorScoreBeforePlay', 'TeamOnOffense', 'Stadium']
     player_drop = ['DisplayName', 'PlayerBirthDate', "IsRusher", "NflId", "NflIdRusher", "Dir",
@@ -421,7 +421,7 @@ def preprocess(train):
 
     drop(train)
 
-    # train.fillna(-999, inplace=True)
+    train.fillna(-999, inplace=True)
 
     print("feature process end,with feature shape:", train.shape)
     # print(train)
@@ -539,6 +539,7 @@ for (test_df, sample_prediction_df) in iter_test:
     for col in X_test.columns:
         if X_test[col].dtype == 'object':
             # print(f)
+            # X_test.loc[col] = lbls[col].transform(list(X_test[col]))
             X_test[col] = X_test[col].map(lbls[col]).fillna(0).astype(int)
         else:
             X_test.loc[:, col] = sss[col].transform(X_test[col].values[:, None])
