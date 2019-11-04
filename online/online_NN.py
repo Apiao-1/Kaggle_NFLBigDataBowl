@@ -69,10 +69,13 @@ def OffensePersonnelSplit(x):
 
 
 def DefensePersonnelSplit(x):
-    dic = {'DB': 0, 'DL': 0, 'LB': 0, 'OL': 0, 'QB': 0, 'RB': 0, 'TE': 0, 'WR': 0}
+    dic = {'DB': 0, 'DL': 0, 'LB': 0, 'other': 0}
     for xx in x.split(","):
         xxs = xx.split(" ")
-        dic[xxs[-1]] = int(xxs[-2])
+        if dic.__contains__(xxs[-1]):
+            dic[xxs[-1]] = int(xxs[-2])
+        else:
+            dic['other'] = int(xxs[-2])
     return dic
 
 
@@ -89,43 +92,6 @@ def transform_time_all(str1, quarter):
         return 15 * 60 - (int(str1[:2]) * 60 + int(str1[3:5])) + (quarter - 1) * 15 * 60
     if quarter == 5:
         return 10 * 60 - (int(str1[:2]) * 60 + int(str1[3:5])) + (quarter - 1) * 15 * 60
-
-
-def get_cdf_df(yards_array):
-    pdf, edges = np.histogram(yards_array, bins=199,
-                              range=(-99, 100), density=True)
-    cdf = pdf.cumsum().clip(0, 1)
-    cdf_df = pd.DataFrame(data=cdf.reshape(-1, 1).T,
-                          columns=['Yards' + str(i) for i in range(-99, 100)])
-    return cdf_df
-
-
-def get_score_pingyi1(y_pred, y_true, cdf, w, dist_to_end):
-    y_pred = int(y_pred)
-    if y_pred == w:
-        y_pred_array = cdf.copy()
-    elif y_pred - w > 0:
-        y_pred_array = np.zeros(199)
-        y_pred_array[(y_pred - w):] = cdf[:(-(y_pred - w))].copy()
-    elif w - y_pred > 0:
-        y_pred_array = np.ones(199)
-        y_pred_array[:(y_pred - w)] = cdf[(w - y_pred):].copy()
-    y_pred_array[-1] = 1
-    y_pred_array[(dist_to_end + 99):] = 1
-    y_true_array = np.zeros(199)
-    y_true_array[(y_true + 99):] = 1
-    return np.mean((y_pred_array - y_true_array) ** 2)
-
-
-def CRPS_pingyi1(y_preds, y_trues, w, cdf, dist_to_ends):
-    if len(y_preds) != len(y_trues):
-        print('length does not match')
-        return None
-    n = len(y_preds)
-    tmp = []
-    for a, b, c in zip(y_preds, y_trues, dist_to_ends):
-        tmp.append(get_score_pingyi1(a, b, cdf, w, c))
-    return np.mean(tmp)
 
 
 def clean_StadiumType(txt):
@@ -1135,7 +1101,8 @@ class GP:
 
 if __name__ == '__main__':
 
-    train = pd.read_csv('../data/train.csv')
+    # train = pd.read_csv('../data/train.csv')
+    train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv')
     train_basetable = preprocess(train)
 
     yards = train_basetable.pop('Yards')
@@ -1182,7 +1149,7 @@ if __name__ == '__main__':
 
     model = Sequential()
 
-    model.add(Dense(512, input_dim=X.shape[1], activation='relu'))
+    model.add(Dense(512, input_dim=X_train.shape[1], activation='relu'))
     model.add(BatchNormalization())
     model.add(Dropout(0.5))
     model.add(Dense(256, activation='relu'))
@@ -1193,7 +1160,7 @@ if __name__ == '__main__':
     model.compile(optimizer='Adam', loss='categorical_crossentropy', metrics=[])
     es = EarlyStopping(monitor='val_CRPS',
                        mode='min',
-                       restore_best_weights=True,
+                       # restore_best_weights=True,
                        verbose=2,
                        patience=5)
     es.set_model(model)
@@ -1202,26 +1169,32 @@ if __name__ == '__main__':
 
     model.fit(X_train, y_train, callbacks=[metric], epochs=100, batch_size=1024)
 
-    # from kaggle.competitions import nflrush
+    from kaggle.competitions import nflrush
 
-    # env = nflrush.make_env()
-    # iter_test = env.iter_test()
-    # gp = GP()
-    # for (test_df, sample_prediction_df) in iter_test:
-    #     basetable = create_features(test_df, deploy=True)
-    #     basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-    #     scaled_basetable = scaler.transform(basetable)
-    #
-    #     y_pred_nn = model.(scaled_basetable)
-    #
-    #     y_pred_gp = np.zeros((test_df.shape[0], 199))
-    #     ans = gp.GrabPredictions(scaled_basetable)
-    #     y_pred_gp[:, 96:96 + 20] = ans # numpy才可以这样，pandas要用iloc
-    #
-    #     y_pred = (.6 * y_pred_nn + .4 * y_pred_gp)
-    #     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
-    #
-    #     preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
-    #     env.predict(preds_df)
-    #
-    # env.write_submission_file()
+    env = nflrush.make_env()
+    iter_test = env.iter_test()
+    gp = GP()
+    for (test_df, sample_prediction_df) in iter_test:
+        X_test = preprocess(test_df)
+        for col in X_test.columns:
+            if X_test[col].dtype == 'object':
+                # print(f)
+                X_test[col] = lbls[col].transform(list(X_test[col]))
+            else:
+                X_test.loc[:, col] = sss[col].transform(X_test[col].values[:, None])
+
+        y_pred_nn = model.predict(X_test)
+
+        y_pred_gp = np.zeros((test_df.shape[0], 199))
+        ans = gp.GrabPredictions(X_test)
+        y_pred_gp[:, 96:96 + 20] = ans  # numpy才可以这样，pandas要用iloc
+
+        y_pred = (.6 * y_pred_nn + .4 * y_pred_gp)
+        y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+
+        preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+        preds_df.iloc[:, :50] = 0
+        preds_df.iloc[:, -50:] = 1
+        env.predict(preds_df)
+
+    env.write_submission_file()
