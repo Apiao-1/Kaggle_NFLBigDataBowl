@@ -1,3 +1,5 @@
+# https://www.kaggle.com/muhakabartay/update-of-hybrid-gp-and-nn
+
 import numpy as np
 import pandas as pd
 import sklearn.metrics as mtr
@@ -882,26 +884,26 @@ if __name__ == '__main__':
 
     model.fit(X_train, y_train, callbacks=[metric], epochs=100, batch_size=1024)
 
-    # from kaggle.competitions import nflrush
+    from kaggle.competitions import nflrush
 
-    # env = nflrush.make_env()
-    # iter_test = env.iter_test()
-    # gp = GP()
-    # for (test_df, sample_prediction_df) in iter_test:
-    #     basetable = create_features(test_df, deploy=True)
-    #     basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-    #     scaled_basetable = scaler.transform(basetable)
-    #
-    #     y_pred_nn = model.(scaled_basetable)
-    #
-    #     y_pred_gp = np.zeros((test_df.shape[0], 199))
-    #     ans = gp.GrabPredictions(scaled_basetable)
-    #     y_pred_gp[:, 96:96 + 20] = ans # numpy才可以这样，pandas要用iloc
-    #
-    #     y_pred = (.6 * y_pred_nn + .4 * y_pred_gp)
-    #     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
-    #
-    #     preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
-    #     env.predict(preds_df)
-    #
-    # env.write_submission_file()
+    env = nflrush.make_env()
+    iter_test = env.iter_test()
+    gp = GP()
+    for (test_df, sample_prediction_df) in iter_test:
+        basetable = create_features(test_df, deploy=True)
+        basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+        scaled_basetable = scaler.transform(basetable)
+
+        y_pred_nn = model.predict(scaled_basetable)
+
+        y_pred_gp = np.zeros((test_df.shape[0], 199))
+        ans = gp.GrabPredictions(scaled_basetable)
+        y_pred_gp[:, 96:96 + 20] = ans # numpy才可以这样，pandas要用iloc
+
+        y_pred = (.6 * y_pred_nn + .4 * y_pred_gp)
+        y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+
+        preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+        env.predict(preds_df)
+
+    env.write_submission_file()
