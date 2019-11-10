@@ -5,6 +5,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import KFold
 from kaggle.competitions import nflrush
+from sklearn.feature_selection import SelectFromModel
 
 env = nflrush.make_env()
 iter_test = env.iter_test()
@@ -263,16 +264,48 @@ y = np.zeros((yards.shape[0], 199))
 for idx, target in enumerate(list(yards)):
     y[idx][99 + target] = 1
 X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
+features = list(X.columns)
 
 scaler = StandardScaler()
-X = scaler.fit_transform(X)
+X[features] = scaler.fit_transform(X[features])
+
+kf = KFold(n_splits=5, random_state=42)
+score = []
+for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+    print(f'Fold : {i}')
+    X_train, X_val, y_train, y_val = X.iloc[tdx], X.iloc[vdx], y[tdx], y[vdx]
+    model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
+                                  n_estimators=50, n_jobs=-1, random_state=42)
+    model.fit(X_train, y_train)
+    score_ = crps(y_val, model.predict(X_val))
+    print(score_)
+    score.append(score_)
+print(np.mean(score))
+
+model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15,
+                              min_samples_split=7, n_estimators=50 * 5, n_jobs=-1, random_state=42).fit(X, y)
+
+fs_ = SelectFromModel(model, prefit=True)
+
+X.shape
+
+fs_.transform(X).shape
+
+feature_idx = fs_.get_support()
+feature_name = X.columns[feature_idx]
+
+print(feature_name)
+
+with open('fe_imp.txt', 'w') as f:
+    for item in feature_name:
+        f.write("%s\n" % item)
 
 models = []
 kf = KFold(n_splits=5, random_state=42)
 score = []
 for i, (tdx, vdx) in enumerate(kf.split(X, y)):
     print(f'Fold : {i}')
-    X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+    X_train, X_val, y_train, y_val = X.iloc[tdx][feature_name], X.iloc[vdx][feature_name], y[tdx], y[vdx]
     model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
                                   n_estimators=50, n_jobs=-1, random_state=42)
     model.fit(X_train, y_train)
@@ -286,9 +319,9 @@ for (test_df, sample_prediction_df) in iter_test:
     basetable = create_features(test_df, deploy=True)
 
     basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-    scaled_basetable = scaler.transform(basetable)
+    basetable[features] = scaler.transform(basetable[features])
 
-    y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
+    y_pred = np.mean([model.predict(basetable[feature_name]) for model in models], axis=0)
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
 
     preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
