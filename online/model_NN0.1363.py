@@ -448,6 +448,14 @@ def get_model(x_tr, y_tr, x_val, y_val):
     bsz = 1024
     steps = x_tr.shape[0] / bsz
 
+    # for i in range(1):
+    #     model.fit(x_tr, y_tr, batch_size=32, verbose=False)
+    # for i in range(1):
+    #     model.fit(x_tr, y_tr, batch_size=64, verbose=False)
+    # for i in range(1):
+    #     model.fit(x_tr, y_tr, batch_size=128, verbose=False)
+    # for i in range(1):
+    #     model.fit(x_tr, y_tr, batch_size=256, verbose=False)
     model.fit(x_tr, y_tr, callbacks=[CRPSCallback(validation=(x_val, y_val)), es, mc], epochs=100, batch_size=bsz,
               verbose=1)
     model.load_weights("best_model.h5")
