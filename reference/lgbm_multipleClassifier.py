@@ -1,4 +1,5 @@
-# https://www.kaggle.com/mrkmakr/lgbm-multiple-classifier LB：0.01385， CV:0.013140205432501861
+# https://www.kaggle.com/mrkmakr/lgbm-multiple-classifier
+#  LB：0.01385， CV:0.013140205432501861
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -444,10 +445,11 @@ if __name__ == '__main__':
     print(train_x.shape)
 
     params = {'lambda_l1': 0.001, 'lambda_l2': 0.001,
-              'num_leaves': 40, 'feature_fraction': 0.4,
+              'num_leaves': 50, 'max_depth': 6,  # 2**6 = 64 - Let's set 50 to prevent overfitting
+              'feature_fraction': 0.4,
               'subsample': 0.4, 'min_child_samples': 10,
-              'learning_rate': 0.1,
-              'num_iterations': 700, 'random_state': 0}
+              'learning_rate': 0.01,
+              'num_iterations': 700, 'random_state': 42}
 
     from sklearn.model_selection import train_test_split, KFold
 

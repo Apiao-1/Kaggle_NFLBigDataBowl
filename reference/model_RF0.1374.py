@@ -5,10 +5,10 @@ import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import KFold
-from kaggle.competitions import nflrush
+# from kaggle.competitions import nflrush
 
-env = nflrush.make_env()
-iter_test = env.iter_test()
+# env = nflrush.make_env()
+# iter_test = env.iter_test()
 
 
 # evaluation metric
@@ -254,45 +254,50 @@ def create_features(df, deploy=False):
     return basetable
 
 
-train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
-outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
-train_basetable = create_features(train, False)
+if __name__ == '__main__':
+    train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
+    # train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+    outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+    train_basetable = create_features(train, False)
 
-X = train_basetable.copy()
-yards = X.Yards
-y = np.zeros((yards.shape[0], 199))
-for idx, target in enumerate(list(yards)):
-    y[idx][99 + target] = 1
-X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
+    X = train_basetable.copy()
+    yards = X.Yards
+    y = np.zeros((yards.shape[0], 199))
+    for idx, target in enumerate(list(yards)):
+        y[idx][99 + target] = 1
+    X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
-scaler = StandardScaler()
-X = scaler.fit_transform(X)
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
 
-models = []
-kf = KFold(n_splits=5, random_state=42)
-score = []
-for i, (tdx, vdx) in enumerate(kf.split(X, y)):
-    print(f'Fold : {i}')
-    X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
-    model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
-                                  n_estimators=50, n_jobs=-1, random_state=42)
-    model.fit(X_train, y_train)
-    score_ = crps(y_val, model.predict(X_val))
-    print(score_)
-    score.append(score_)
-    models.append(model)
-print(np.mean(score))
-
-for (test_df, sample_prediction_df) in iter_test:
-    basetable = create_features(test_df, deploy=True)
-
-    basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-    scaled_basetable = scaler.transform(basetable)
-
-    y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
-    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
-
-    preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
-    env.predict(preds_df)
-
-env.write_submission_file()
+    models = []
+    kf = KFold(n_splits=5, random_state=42)
+    score = []
+    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+        print(f'Fold : {i}')
+        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+        # print(y_train.shape) # (800, 199)
+        model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
+                                      n_estimators=50, n_jobs=-1, random_state=42)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_val)
+        print(y_pred.shape)
+        score_ = crps(y_val, y_pred)
+        print(score_)
+        score.append(score_)
+        models.append(model)
+    print(np.mean(score))
+    #
+    # for (test_df, sample_prediction_df) in iter_test:
+    #     basetable = create_features(test_df, deploy=True)
+    #
+    #     basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+    #     scaled_basetable = scaler.transform(basetable)
+    #
+    #     y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
+    #     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+    #
+    #     preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+    #     env.predict(preds_df)
+    #
+    # env.write_submission_file()
