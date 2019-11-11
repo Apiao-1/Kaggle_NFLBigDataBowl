@@ -22,7 +22,11 @@ import time
 pd.set_option('display.max_columns', 50)
 pd.set_option('display.max_rows', 150)
 
-TRAIN_OFFLINE = False
+
+def crps(y_true, y_pred):
+    y_true = np.clip(np.cumsum(y_true, axis=1), 0, 1)
+    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+    return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
 
 def strtoseconds(txt):
     txt = txt.split(':')
@@ -75,90 +79,6 @@ def orientation_to_cat(x):
         return str(int(x/15))
     except:
         return "nan"
-def preprocess(train):
-    ## GameClock
-    train['GameClock_sec'] = train['GameClock'].apply(strtoseconds)
-    train["GameClock_minute"] = train["GameClock"].apply(lambda x : x.split(":")[0]).astype("object")
-
-    ## Height
-    train['PlayerHeight_dense'] = train['PlayerHeight'].apply(lambda x: 12*int(x.split('-')[0])+int(x.split('-')[1]))
-
-    ## Time
-    train['TimeHandoff'] = train['TimeHandoff'].apply(lambda x: datetime.datetime.strptime(x, "%Y-%m-%dT%H:%M:%S.%fZ"))
-    train['TimeSnap'] = train['TimeSnap'].apply(lambda x: datetime.datetime.strptime(x, "%Y-%m-%dT%H:%M:%S.%fZ"))
-
-    train['TimeDelta'] = train.apply(lambda row: (row['TimeHandoff'] - row['TimeSnap']).total_seconds(), axis=1)
-    train['PlayerBirthDate'] = train['PlayerBirthDate'].apply(lambda x: datetime.datetime.strptime(x, "%m/%d/%Y"))
-
-    ## Age
-    seconds_in_year = 60*60*24*365.25
-    train['PlayerAge'] = train.apply(lambda row: (row['TimeHandoff']-row['PlayerBirthDate']).total_seconds()/seconds_in_year, axis=1)
-    train["PlayerAge_ob"] = train['PlayerAge'].astype(np.int).astype("object")
-
-    ## WindSpeed
-    train['WindSpeed_ob'] = train['WindSpeed'].apply(lambda x: x.lower().replace('mph', '').strip() if not pd.isna(x) else x)
-    train['WindSpeed_ob'] = train['WindSpeed_ob'].apply(lambda x: (int(x.split('-')[0])+int(x.split('-')[1]))/2 if not pd.isna(x) and '-' in x else x)
-    train['WindSpeed_ob'] = train['WindSpeed_ob'].apply(lambda x: (int(x.split()[0])+int(x.split()[-1]))/2 if not pd.isna(x) and type(x)!=float and 'gusts up to' in x else x)
-    train['WindSpeed_dense'] = train['WindSpeed_ob'].apply(strtofloat)
-
-    ## Weather
-    train['GameWeather_process'] = train['GameWeather'].str.lower()
-    train['GameWeather_process'] = train['GameWeather_process'].apply(lambda x: "indoor" if not pd.isna(x) and "indoor" in x else x)
-    train['GameWeather_process'] = train['GameWeather_process'].apply(lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party', 'partly') if not pd.isna(x) else x)
-    train['GameWeather_process'] = train['GameWeather_process'].apply(lambda x: x.replace('clear and sunny', 'sunny and clear') if not pd.isna(x) else x)
-    train['GameWeather_process'] = train['GameWeather_process'].apply(lambda x: x.replace('skies', '').replace("mostly", "").strip() if not pd.isna(x) else x)
-    train['GameWeather_dense'] = train['GameWeather_process'].apply(map_weather)
-
-    ## Rusher
-    train['IsRusher'] = (train['NflId'] == train['NflIdRusher'])
-    train['IsRusher_ob'] = (train['NflId'] == train['NflIdRusher']).astype("object")
-    temp = train[train["IsRusher"]][["Team", "PlayId"]].rename(columns={"Team":"RusherTeam"})
-    train = train.merge(temp, on = "PlayId")
-    train["IsRusherTeam"] = train["Team"] == train["RusherTeam"]
-
-    ## dense -> categorical
-    train["Quarter_ob"] = train["Quarter"].astype("object")
-    train["Down_ob"] = train["Down"].astype("object")
-    train["JerseyNumber_ob"] = train["JerseyNumber"].astype("object")
-    train["YardLine_ob"] = train["YardLine"].astype("object")
-    # train["DefendersInTheBox_ob"] = train["DefendersInTheBox"].astype("object")
-    # train["Week_ob"] = train["Week"].astype("object")
-    # train["TimeDelta_ob"] = train["TimeDelta"].astype("object")
-
-
-    ## Orientation and Dir
-    train["Orientation_ob"] = train["Orientation"].apply(lambda x : orientation_to_cat(x)).astype("object")
-    train["Dir_ob"] = train["Dir"].apply(lambda x : orientation_to_cat(x)).astype("object")
-
-    train["Orientation_sin"] = train["Orientation"].apply(lambda x : np.sin(x/360 * 2 * np.pi))
-    train["Orientation_cos"] = train["Orientation"].apply(lambda x : np.cos(x/360 * 2 * np.pi))
-    train["Dir_sin"] = train["Dir"].apply(lambda x : np.sin(x/360 * 2 * np.pi))
-    train["Dir_cos"] = train["Dir"].apply(lambda x : np.cos(x/360 * 2 * np.pi))
-
-    ## diff Score
-    train["diffScoreBeforePlay"] = train["HomeScoreBeforePlay"] - train["VisitorScoreBeforePlay"]
-    train["diffScoreBeforePlay_binary_ob"] = (train["HomeScoreBeforePlay"] > train["VisitorScoreBeforePlay"]).astype("object")
-
-    ## Turf
-    Turf = {'Field Turf':'Artificial', 'A-Turf Titan':'Artificial', 'Grass':'Natural', 'UBU Sports Speed S5-M':'Artificial', 'Artificial':'Artificial', 'DD GrassMaster':'Artificial', 'Natural Grass':'Natural', 'UBU Speed Series-S5-M':'Artificial', 'FieldTurf':'Artificial', 'FieldTurf 360':'Artificial', 'Natural grass':'Natural', 'grass':'Natural', 'Natural':'Natural', 'Artifical':'Artificial', 'FieldTurf360':'Artificial', 'Naturall Grass':'Natural', 'Field turf':'Artificial', 'SISGrass':'Artificial', 'Twenty-Four/Seven Turf':'Artificial', 'natural grass':'Natural'}
-    train['Turf'] = train['Turf'].map(Turf)
-
-    ## OffensePersonnel
-    temp = train["OffensePersonnel"].iloc[np.arange(0, len(train), 22)].apply(lambda x : pd.Series(OffensePersonnelSplit(x)))
-    temp.columns = ["Offense" + c for c in temp.columns]
-    temp["PlayId"] = train["PlayId"].iloc[np.arange(0, len(train), 22)]
-    train = train.merge(temp, on = "PlayId")
-
-    ## DefensePersonnel
-    temp = train["DefensePersonnel"].iloc[np.arange(0, len(train), 22)].apply(lambda x : pd.Series(DefensePersonnelSplit(x)))
-    temp.columns = ["Defense" + c for c in temp.columns]
-    temp["PlayId"] = train["PlayId"].iloc[np.arange(0, len(train), 22)]
-    train = train.merge(temp, on = "PlayId")
-
-    ## sort
-#     train = train.sort_values(by = ['X']).sort_values(by = ['Dis']).sort_values(by=['PlayId', 'Team', 'IsRusher']).reset_index(drop = True)
-    train = train.sort_values(by = ['X']).sort_values(by = ['Dis']).sort_values(by=['PlayId', 'IsRusherTeam', 'IsRusher']).reset_index(drop = True)
-    return train
 
 def create_features(df, deploy=False):
     def new_X(x_coordinate, play_direction):
@@ -333,8 +253,15 @@ def create_features(df, deploy=False):
         df["Orientation_cos"] = df["Orientation"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
         df["Dir_sin"] = df["Dir"].apply(lambda x: np.sin(x / 360 * 2 * np.pi))
         df["Dir_cos"] = df["Dir"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
+        add_new_feas.append("Orientation_cos")
+        add_new_feas.append("Orientation_sin")
         add_new_feas.append("Dir_sin")
         add_new_feas.append("Dir_cos")
+
+        ## Turf
+        grass_labels = ['grass', 'natural grass', 'natural', 'naturall grass']
+        df['Grass'] = np.where(df.Turf.str.lower().isin(grass_labels), 1, 0)
+        add_new_feas.append("Grass")
 
         ## diff Score
         df["diffScoreBeforePlay"] = df["HomeScoreBeforePlay"] - df["VisitorScoreBeforePlay"]
@@ -461,13 +388,11 @@ def get_model(x_tr, y_tr, x_val, y_val):
     model.load_weights("best_model.h5")
 
     y_pred = model.predict(x_val)
-    y_valid = y_val
-    y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
-    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-    val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * x_val.shape[0])
-    crps = np.round(val_s, 6)
+    y_true = y_val
+    val_s = crps(y_true, y_pred)
+    crps_round = np.round(val_s, 7)
 
-    return model, crps
+    return model, crps_round
 
 
 def predict(x_te):
@@ -482,10 +407,11 @@ def predict(x_te):
 
     return y_pred
 
+TRAIN_OFFLINE = False
 
 if __name__ == '__main__':
     if TRAIN_OFFLINE:
-        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
+        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
     else:
         train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
 
