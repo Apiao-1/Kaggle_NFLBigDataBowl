@@ -22,7 +22,6 @@ import time
 pd.set_option('display.max_columns', 50)
 pd.set_option('display.max_rows', 150)
 
-TRAIN_OFFLINE = False
 
 def strtoseconds(txt):
     txt = txt.split(':')
@@ -474,16 +473,20 @@ def predict(x_te):
 
     return y_pred
 
+TRAIN_OFFLINE = True
 
 if __name__ == '__main__':
     if TRAIN_OFFLINE:
-        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
+        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
     else:
         train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
 
     outcomes = train[['GameId','PlayId','Yards']].drop_duplicates()
 
     train_basetable = create_features(train, False)
+
+    print(train_basetable.head())
+    print(train_basetable.shape)
 
     X = train_basetable.copy()
     yards = X.Yards

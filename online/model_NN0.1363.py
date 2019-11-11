@@ -285,15 +285,15 @@ def create_features(df, deploy=False):
         add_new_feas.append('PlayerAge')
 
         ## WindSpeed
-        df['WindSpeed_ob'] = df['WindSpeed'].apply(
-            lambda x: x.lower().replace('mph', '').strip() if not pd.isna(x) else x)
-        df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
-            lambda x: (int(x.split('-')[0]) + int(x.split('-')[1])) / 2 if not pd.isna(x) and '-' in x else x)
-        df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
-            lambda x: (int(x.split()[0]) + int(x.split()[-1])) / 2 if not pd.isna(x) and type(
-                x) != float and 'gusts up to' in x else x)
-        df['WindSpeed_dense'] = df['WindSpeed_ob'].apply(strtofloat)
-        add_new_feas.append('WindSpeed_dense')
+        # df['WindSpeed_ob'] = df['WindSpeed'].apply(
+        #     lambda x: x.lower().replace('mph', '').strip() if not pd.isna(x) else x)
+        # df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
+        #     lambda x: (int(x.split('-')[0]) + int(x.split('-')[1])) / 2 if not pd.isna(x) and '-' in x else x)
+        # df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
+        #     lambda x: (int(x.split()[0]) + int(x.split()[-1])) / 2 if not pd.isna(x) and type(
+        #         x) != float and 'gusts up to' in x else x)
+        # df['WindSpeed_dense'] = df['WindSpeed_ob'].apply(strtofloat)
+        # add_new_feas.append('WindSpeed_dense')
 
         ## Weather
         df['GameWeather_process'] = df['GameWeather'].str.lower()
