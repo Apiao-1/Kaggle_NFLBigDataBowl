@@ -1,8 +1,10 @@
-# https://www.kaggle.com/bestpredict/location-eda-8eb410/comments
+# https://www.kaggle.com/coolcoder22/nfl-001-random-forest
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import KFold
 import os
-TRAIN_ABLE_FALSE=True
-if TRAIN_ABLE_FALSE:
-    os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split, KFold
@@ -11,27 +13,32 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
-from keras.layers import Dense,Input,Flatten,concatenate,Dropout,Lambda,BatchNormalization
+from keras.layers import Dense, Input, Flatten, concatenate, Dropout, Lambda, BatchNormalization
 from keras.models import Model
 import keras.backend as K
 from keras.callbacks import Callback
-from  keras.callbacks import EarlyStopping,ModelCheckpoint
+from keras.callbacks import EarlyStopping, ModelCheckpoint
 import datetime
 import time
+import warnings
+
+warnings.filterwarnings("ignore")
 
 pd.set_option('display.max_columns', 50)
 pd.set_option('display.max_rows', 150)
 
 
-def crps(y_true, y_pred):
+def metric_crps(y_true, y_pred):
     y_true = np.clip(np.cumsum(y_true, axis=1), 0, 1)
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
     return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
 
+
 def strtoseconds(txt):
     txt = txt.split(':')
-    ans = int(txt[0])*60 + int(txt[1]) + int(txt[2])/60
+    ans = int(txt[0]) * 60 + int(txt[1]) + int(txt[2]) / 60
     return ans
+
 
 def strtofloat(x):
     try:
@@ -39,46 +46,81 @@ def strtofloat(x):
     except:
         return -1
 
+
 def map_weather(txt):
     ans = 1
     if pd.isna(txt):
         return 0
     if 'partly' in txt:
-        ans*=0.5
+        ans *= 0.5
     if 'climate controlled' in txt or 'indoor' in txt:
-        return ans*3
+        return ans * 3
     if 'sunny' in txt or 'sun' in txt:
-        return ans*2
+        return ans * 2
     if 'clear' in txt:
         return ans
     if 'cloudy' in txt:
         return -ans
     if 'rain' in txt or 'rainy' in txt:
-        return -2*ans
+        return -2 * ans
     if 'snow' in txt:
-        return -3*ans
+        return -3 * ans
     return 0
 
+
 def OffensePersonnelSplit(x):
-    dic = {'DB' : 0, 'DL' : 0, 'LB' : 0, 'OL' : 0, 'QB' : 0, 'RB' : 0, 'TE' : 0, 'WR' : 0}
+    dic = {'DB': 0, 'DL': 0, 'LB': 0, 'OL': 0, 'QB': 0, 'RB': 0, 'TE': 0, 'WR': 0}
     for xx in x.split(","):
         xxs = xx.split(" ")
         dic[xxs[-1]] = int(xxs[-2])
     return dic
 
+
 def DefensePersonnelSplit(x):
-    dic = {'DB' : 0, 'DL' : 0, 'LB' : 0, 'OL' : 0}
+    dic = {'DB': 0, 'DL': 0, 'LB': 0, 'OL': 0}
     for xx in x.split(","):
         xxs = xx.split(" ")
         dic[xxs[-1]] = int(xxs[-2])
     return dic
+
 
 def orientation_to_cat(x):
     x = np.clip(x, 0, 360 - 1)
     try:
-        return str(int(x/15))
+        return str(int(x / 15))
     except:
         return "nan"
+
+
+def clean_StadiumType(txt):
+    if pd.isna(txt):
+        return np.nan
+    txt = txt.lower()
+    punctuation = r"""!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~"""
+    txt = ''.join([c for c in txt if c not in punctuation])
+    txt = re.sub(' +', ' ', txt)
+    txt = txt.strip()
+    txt = txt.replace('outside', 'outdoor')
+    txt = txt.replace('outdor', 'outdoor')
+    txt = txt.replace('outddors', 'outdoor')
+    txt = txt.replace('outdoors', 'outdoor')
+    txt = txt.replace('oudoor', 'outdoor')
+    txt = txt.replace('indoors', 'indoor')
+    txt = txt.replace('ourdoor', 'outdoor')
+    txt = txt.replace('retractable', 'rtr.')
+    return txt
+
+
+def transform_StadiumType(txt):
+    if pd.isna(txt):
+        return np.nan
+    if 'outdoor' in txt or 'open' in txt:
+        return 1
+    if 'indoor' in txt or 'closed' in txt:
+        return 0
+
+    return np.nan
+
 
 def create_features(df, deploy=False):
     def new_X(x_coordinate, play_direction):
@@ -263,6 +305,11 @@ def create_features(df, deploy=False):
         df['Grass'] = np.where(df.Turf.str.lower().isin(grass_labels), 1, 0)
         add_new_feas.append("Grass")
 
+        # StadiumType
+        # df['StadiumType'] = df['StadiumType'].apply(clean_StadiumType)
+        # df['StadiumType'] = df['StadiumType'].apply(transform_StadiumType)
+        # add_new_feas.append("StadiumType")
+
         ## diff Score
         df["diffScoreBeforePlay"] = df["HomeScoreBeforePlay"] - df["VisitorScoreBeforePlay"]
         add_new_feas.append("diffScoreBeforePlay")
@@ -297,179 +344,52 @@ def create_features(df, deploy=False):
     return basetable
 
 
-from keras.layers import Dense, Input, Flatten, concatenate, Dropout, Lambda
-from keras.models import Model
-import keras.backend as K
-import re
-from keras.losses import binary_crossentropy
-from keras.callbacks import EarlyStopping, ModelCheckpoint
-import codecs
-
-from keras.utils import to_categorical
-from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
-from sklearn.metrics import f1_score
-
-
-class CRPSCallback(Callback):
-
-    def __init__(self, validation, predict_batch_size=20, include_on_batch=False):
-        super(CRPSCallback, self).__init__()
-        self.validation = validation
-        self.predict_batch_size = predict_batch_size
-        self.include_on_batch = include_on_batch
-
-        print('validation shape', len(self.validation))
-
-    def on_batch_begin(self, batch, logs={}):
-        pass
-
-    def on_train_begin(self, logs={}):
-        if not ('CRPS_score_val' in self.params['metrics']):
-            self.params['metrics'].append('CRPS_score_val')
-
-    def on_batch_end(self, batch, logs={}):
-        if (self.include_on_batch):
-            logs['CRPS_score_val'] = float('-inf')
-
-    def on_epoch_end(self, epoch, logs={}):
-        logs['CRPS_score_val'] = float('-inf')
-
-        if (self.validation):
-            X_valid, y_valid = self.validation[0], self.validation[1]
-            y_pred = self.model.predict(X_valid)
-            y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
-            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-            val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * X_valid.shape[0])
-            val_s = np.round(val_s, 6)
-            logs['CRPS_score_val'] = val_s
-
-
-def get_model(x_tr, y_tr, x_val, y_val):
-    inp = Input(shape=(x_tr.shape[1],))
-    x = Dense(1024, input_dim=X.shape[1], activation='relu')(inp)
-    x = Dropout(0.5)(x)
-    x = BatchNormalization()(x)
-    x = Dense(512, activation='relu')(x)
-    x = Dropout(0.5)(x)
-    x = BatchNormalization()(x)
-    x = Dense(256, activation='relu')(x)
-    x = Dropout(0.5)(x)
-    x = BatchNormalization()(x)
-
-    out = Dense(199, activation='softmax')(x)
-    model = Model(inp, out)
-    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=[])
-    # add lookahead
-    #     lookahead = Lookahead(k=5, alpha=0.5) # Initialize Lookahead
-    #     lookahead.inject(model) # add into model
-
-    es = EarlyStopping(monitor='CRPS_score_val',
-                       mode='min',
-                       restore_best_weights=True,
-                       verbose=1,
-                       patience=10)
-
-    mc = ModelCheckpoint('best_model.h5', monitor='CRPS_score_val', mode='min',
-                         save_best_only=True, verbose=1, save_weights_only=True)
-
-    bsz = 1024
-    steps = x_tr.shape[0] / bsz
-
-    # for i in range(1):
-    #     model.fit(x_tr, y_tr, batch_size=32, verbose=False)
-    # for i in range(1):
-    #     model.fit(x_tr, y_tr, batch_size=64, verbose=False)
-    # for i in range(1):
-    #     model.fit(x_tr, y_tr, batch_size=128, verbose=False)
-    # for i in range(1):
-    #     model.fit(x_tr, y_tr, batch_size=256, verbose=False)
-    model.fit(x_tr, y_tr, callbacks=[CRPSCallback(validation=(x_val, y_val)), es, mc], epochs=100, batch_size=bsz,
-              verbose=1)
-    model.load_weights("best_model.h5")
-
-    y_pred = model.predict(x_val)
-    y_true = y_val
-    val_s = crps(y_true, y_pred)
-    crps_round = np.round(val_s, 7)
-
-    return model, crps_round
-
-
-def predict(x_te):
-    model_num = len(models)
-    for k, m in enumerate(models):
-        if k == 0:
-            y_pred = m.predict(x_te, batch_size=1024)
-        else:
-            y_pred += m.predict(x_te, batch_size=1024)
-
-    y_pred = y_pred / model_num
-
-    return y_pred
-
-TRAIN_OFFLINE = False
-
 if __name__ == '__main__':
-    if TRAIN_OFFLINE:
-        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
-    else:
-        train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
-
-    outcomes = train[['GameId','PlayId','Yards']].drop_duplicates()
-
+    train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
+    # train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+    outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
     train_basetable = create_features(train, False)
 
     X = train_basetable.copy()
     yards = X.Yards
-
     y = np.zeros((yards.shape[0], 199))
     for idx, target in enumerate(list(yards)):
         y[idx][99 + target] = 1
-
     X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=12345)
-    print(X_train.shape, X_val.shape)
-    print(y_train.shape, y_val.shape)
-
-    losses = []
     models = []
-    crps_csv = []
+    kf = KFold(n_splits=5, random_state=42)
+    score = []
+    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+        print(f'Fold : {i}')
+        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+        # print(y_train.shape) # (800, 199)
+        model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
+                                      n_estimators=50, n_jobs=-1, random_state=42)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_val)
+        print(y_pred.shape)
+        score_ = metric_crps(y_val, y_pred)
+        print(score_)
+        score.append(score_)
+        models.append(model)
+    print(np.mean(score))
+    ## from kaggle.competitions import nflrush
 
-    s_time = time.time()
-
-    for k in range(2):
-        kfold = KFold(5, random_state=42 + k, shuffle=True)
-        for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(yards)):
-            print("-----------")
-            print("-----------")
-            tr_x, tr_y = X[tr_inds], y[tr_inds]
-            val_x, val_y = X[val_inds], y[val_inds]
-            model, crps = get_model(tr_x, tr_y, val_x, val_y)
-            models.append(model)
-            print("the %d fold crps is %f" % ((k_fold + 1), crps))
-            crps_csv.append(crps)
-
-    print("mean crps is %f" % np.mean(crps_csv))
-
-    # if TRAIN_OFFLINE == False:
-    #     from kaggle.competitions import nflrush
-    #
-    #     env = nflrush.make_env()
-    #     iter_test = env.iter_test()
-    #
-    #     for (test_df, sample_prediction_df) in iter_test:
-    #         basetable = create_features(test_df, deploy=True)
-    #         basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-    #         scaled_basetable = scaler.transform(basetable)
-    #
-    #         y_pred = predict(scaled_basetable)
-    #         y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
-    #
-    #         preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
-    #         env.predict(preds_df)
-    #
-    #     env.write_submission_file()
+# env = nflrush.make_env()
+# for (test_df, sample_prediction_df) in iter_test:
+#     basetable = create_features(test_df, deploy=True)
+#
+#     basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+#     scaled_basetable = scaler.transform(basetable)
+#
+#     y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
+#     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+#
+#     preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+#     env.predict(preds_df)
+#
+# env.write_submission_file()
