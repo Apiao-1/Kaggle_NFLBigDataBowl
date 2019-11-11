@@ -354,8 +354,10 @@ if __name__ == '__main__':
         print(f'Fold : {i}')
         X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
         print(X_train.shape, y_train.shape) # (800, 199)
-        model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
-                                      n_estimators=50, n_jobs=-1, random_state=42)
+        # model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
+        #                               n_estimators=50, n_jobs=-1, random_state=42)
+        model = LGBMClassifier(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
+                                      n_estimators=50, n_jobs=-1, random_state=42, eval_metric="multi_logloss")
         model.fit(X_train, y_train)
         y_pred = model.predict(X_val)
         # print(y_pred.shape) # (200, 199)
