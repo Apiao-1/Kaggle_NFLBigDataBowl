@@ -1,13 +1,14 @@
-# https://www.kaggle.com/coolcoder22/nfl-001-random-forest
+# https://www.kaggle.com/enzoamp/nfl-lightgbm/code
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 import numpy as np
-from lightgbm import LGBMRegressor,LGBMClassifier
+import lightgbm as lgb
 import pandas as pd
 from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import StandardScaler
 import datetime
 import warnings
+import os
 
 warnings.filterwarnings("ignore")
 
@@ -20,6 +21,16 @@ def metric_crps(y_true, y_pred):
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
     return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
 
+def early_metric_crps(y_true, y_pred):
+    print(y_pred.shape, y_true.shape)
+    y = np.zeros((y_true.shape[0], 199))
+    for idx, target in enumerate(list(y_true)):
+        y[idx][99 + target] = 1
+    y_true = np.clip(np.cumsum(y, axis=1), 0, 1)
+    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+    crps = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
+    # print(crps)
+    return "CRPS", crps
 
 def strtoseconds(txt):
     txt = txt.split(':')
@@ -330,55 +341,98 @@ def create_features(df, deploy=False):
 
     return basetable
 
+TRAIN_OFFLINE = False
 
-if __name__ == '__main__':
-    train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
-# train = pd.read_csv('../input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+# if __name__ == '__main__':
+path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
+if TRAIN_OFFLINE:
+    if os.path.exists(path):
+        train_basetable = pd.read_csv(path)
+    else:
+        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
+        outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+        train_basetable = create_features(train, False)
+        train_basetable.to_csv(path, index=False)
+else:
+    train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
     outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
     train_basetable = create_features(train, False)
 
-    X = train_basetable.copy()
-    yards = X.Yards
-    y = np.zeros((yards.shape[0], 199))
-    for idx, target in enumerate(list(yards)):
-        y[idx][99 + target] = 1
-    X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
+X = train_basetable.copy()
+yards = X.Yards
+y = np.zeros((yards.shape[0], 199))
+for idx, target in enumerate(list(yards)):
+    y[idx][99 + target] = 1
+X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
-    scaler = StandardScaler()
-    X = scaler.fit_transform(X)
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
 
-    models = []
-    kf = KFold(n_splits=5, random_state=42)
-    score = []
-    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
-        print(f'Fold : {i}')
-        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
-        print(X_train.shape, y_train.shape) # (800, 199)
-        # model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
-        #                               n_estimators=50, n_jobs=-1, random_state=42)
-        model = LGBMClassifier(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
-                                      n_estimators=50, n_jobs=-1, random_state=42, eval_metric="multi_logloss")
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_val)
-        # print(y_pred.shape) # (200, 199)
-        score_ = metric_crps(y_val, y_pred)
-        print(score_)
-        score.append(score_)
-        models.append(model)
-    print(np.mean(score))
-    # from kaggle.competitions import nflrush
-    #
-    # env = nflrush.make_env()
-    # for (test_df, sample_prediction_df) in env.iter_test():
-    #     basetable = create_features(test_df, deploy=True)
-    #
-    #     basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-    #     scaled_basetable = scaler.transform(basetable)
-    #
-    #     y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
-    #     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
-    #
-    #     preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
-    #     env.predict(preds_df)
-    #
-    # env.write_submission_file()
+models = []
+kf = KFold(n_splits=5, random_state=42)
+score = []
+
+y = np.argmax(y, axis=1) # 这里还有步隐含的含义：即把负的标签通过取index变为正的了
+
+for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+    print(f'Fold : {i}')
+    X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+    print(X_train.shape, y_train.shape) # (800, 199)
+    print(X_val.shape, y_val.shape) # (800, 199)
+    # model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
+    #                               n_estimators=50, n_jobs=-1, random_state=42)
+    param = {'num_leaves': 50,  # Original 50
+             'min_data_in_leaf': 30,  # Original 30
+             'n_estimators': 500,
+             'objective': 'multiclass',
+             'num_class': 199,  # 199 possible places
+             'max_depth': 6,
+             'learning_rate': 0.01,
+             'min_split_gain': 0,
+             'min_child_weight': 1e-3,
+             'min_child_samples': 21,
+             'subsample': .8,
+             'colsample_bytree': .8,
+             # "boosting": "gbdt",
+             # "feature_fraction": 0.7,  # 0.9
+             # "bagging_freq": 1,
+             # "bagging_fraction": 0.9,
+             # "bagging_seed": 11,
+             "metric": "multi_logloss",
+             # "lambda_l1": 0.1,
+             "verbosity": -1,
+
+             "seed": 42,
+             }
+
+    trn_data = lgb.Dataset(X_train, label=y_train)
+    val_data = lgb.Dataset(X_val, label=y_val)
+    num_round = 10000
+    # model.fit(X_train, y_train, eval_set = [(X_train,y_train),(X_val, y_val)], early_stopping_rounds=60)
+    model = lgb.train(param, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=100,
+                      early_stopping_rounds=60)
+
+    # y_pred = model.predict(X_val)
+    y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+    print(y_pred.shape) # (200, 199)
+    score_ = metric_crps(np.expand_dims(y_val, axis=1), y_pred)
+    print(score_)
+    score.append(score_)
+    models.append(model)
+print(np.mean(score))
+from kaggle.competitions import nflrush
+
+env = nflrush.make_env()
+for (test_df, sample_prediction_df) in env.iter_test():
+    basetable = create_features(test_df, deploy=True)
+
+    basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+    scaled_basetable = scaler.transform(basetable)
+
+    y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
+    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+
+    preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+    env.predict(preds_df)
+
+env.write_submission_file()
