@@ -347,6 +347,7 @@ class MultiLGBMClassifier():
         for k in tqdm_notebook(range(self.resolution)):
             ## train each model
             self.models[k].fit(x, (y + k) // self.resolution)
+            # self.models[k].fit(x, (y + k) // self.resolution, eval_set=[(x, (y + k) // self.resolution),(X_test, y_test)],early_stopping_rounds=60)
             ## (0,1,2,3,4,5,6,7,8,9) -> (0,0,0,0,0,1,1,1,1,1) -> 乘resolution+set之后(0,5)
             # tmp = (y + k) // self.resolution
             # tmp2 = set(tmp)
@@ -403,10 +404,10 @@ else:
     train_basetable = create_features(train, False)
 
 X = train_basetable.copy()
-yards = X.Yards
-y = np.zeros((yards.shape[0], 199))
-for idx, target in enumerate(list(yards)):
-    y[idx][99 + target] = 1
+y = X.Yards
+# y = np.zeros((yards.shape[0], 199))
+# for idx, target in enumerate(list(yards)):
+#     y[idx][99 + target] = 1
 X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
 scaler = StandardScaler()
@@ -416,7 +417,7 @@ models = []
 kf = KFold(n_splits=5, random_state=42)
 score = []
 
-y = np.argmax(y, axis=1) # 这里还有步隐含的含义：即把负的标签通过取index变为正的了
+# y = np.argmax(y, axis=1) # 这里还有步隐含的含义：即把负的标签通过取index变为正的了
 
 for i, (tdx, vdx) in enumerate(kf.split(X, y)):
     print(f'Fold : {i}')
@@ -442,6 +443,7 @@ for i, (tdx, vdx) in enumerate(kf.split(X, y)):
 
     model = MultiLGBMClassifier(resolution=5, params=param)
     model.fit(X_train, y_train)
+    # model.fit(X_train, y_train, X_val, y_val)
     y_pred = model.predict(X_val)
     print(y_pred.shape) # (200, 199)
 
