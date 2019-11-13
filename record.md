@@ -11,6 +11,9 @@
 1. https://www.kaggle.com/apiao1/model-rf?scriptVersionId=23306697
    V2 cv:0.012934402524660512 lb:.1372 特征同NN.2
    
+1. https://www.kaggle.com/apiao1/model-rf/output?scriptVersionId=23400566
+   V2 cv:0.01292363832402649 lb:.1373 
+   
 ## lgbm 
 预测多标签方法：
 1. 直接用lgbm的api：https://www.kaggle.com/enzoamp/nfl-lightgbm/code
