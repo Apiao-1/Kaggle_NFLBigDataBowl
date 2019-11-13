@@ -29,3 +29,5 @@ https://www.kaggle.com/apiao1/model-lgbm-regression/notebook?scriptVersionId=233
 V4 cv:0.01360 lb:0.01412(不及原文的成绩，原文的cv0.01349,lb0.01401) 应该过拟合很严重，调参应该有较好结果
 
 3. LGBMClassifier + 平滑， https://www.kaggle.com/mrkmakr/lgbm-multiple-classifier
+https://www.kaggle.com/apiao1/model-lgbm-multipleclassifier?scriptVersionId=23397574
+V7 效果不好，cv:0.020105, lb:0.02159 ,猜测哪里有bug,(原文：cv:0.013140205432501861，lb:0.01384)

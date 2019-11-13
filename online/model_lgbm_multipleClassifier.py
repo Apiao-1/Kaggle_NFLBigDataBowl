@@ -13,7 +13,6 @@ import re
 from tqdm import tqdm_notebook
 from lightgbm import LGBMClassifier
 
-
 warnings.filterwarnings("ignore")
 
 pd.set_option('display.max_columns', 50)
@@ -335,6 +334,7 @@ def create_features(df, deploy=False):
 
     return basetable
 
+
 class MultiLGBMClassifier():
     def __init__(self, resolution, params):
         ## smoothing size
@@ -422,32 +422,43 @@ score = []
 for i, (tdx, vdx) in enumerate(kf.split(X, y)):
     print(f'Fold : {i}')
     X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
-    print(X_train.shape, y_train.shape) # (800, 199)
-    print(X_val.shape, y_val.shape) # (800, 199)
+    print(X_train.shape, y_train.shape)  # (800, 199)
+    print(X_val.shape, y_val.shape)  # (800, 199)
 
-    param = {'num_leaves': 50,  # Original 50
-             'min_data_in_leaf': 30,  # Original 30
-             'n_estimators': 300,
-             'max_depth': 6,
-             'learning_rate': 0.01,
-             'min_child_samples': 10,
-             'subsample': .8,
-             'colsample_bytree': .8,
+    y_tmp = y_val.copy()
+    y_true = np.zeros((y_tmp.shape[0], 199))
+    for idx, target in enumerate(list(y_tmp)):
+        y_true[idx][99 + target] = 1
 
-             'objective': 'multiclass',
-             'num_class': 199,  # 199 possible places
-             "metric": "multi_logloss",
-             "verbosity": -1,
-             "seed": 42,
-             }
+    param = {
+        'n_estimators': 700,
+        'learning_rate': 0.01,
+
+        # 'colsample_bytree': .8,
+        'lambda_l1': 0.001,
+        'lambda_l2': 0.001,
+        'num_leaves': 40,
+        'feature_fraction': 0.4,
+        'subsample': .4,
+        'min_child_samples': 10,
+
+        'max_depth': 6,
+
+        # 'objective': 'multiclass',
+        # 'min_data_in_leaf': 30,  # Original 30
+        # 'num_class': 199,  # 199 possible places
+        # "metric": "multi_logloss",
+        # "verbosity": -1,
+        "seed": 42,
+    }
 
     model = MultiLGBMClassifier(resolution=5, params=param)
     model.fit(X_train, y_train)
     # model.fit(X_train, y_train, X_val, y_val)
     y_pred = model.predict(X_val)
-    print(y_pred.shape) # (200, 199)
+    print(y_pred.shape)  # (200, 199)
 
-    score_ = metric_crps(np.expand_dims(y_val, axis=1), y_pred)
+    score_ = metric_crps(y_true, y_pred)
     print(score_)
     score.append(score_)
     models.append(model)
