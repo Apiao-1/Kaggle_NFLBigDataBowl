@@ -9,21 +9,30 @@ from math import ceil
 from matplotlib import pyplot
 
 from catboost import CatBoostClassifier
-from lightgbm import LGBMRegressor
-from sklearn.ensemble import GradientBoostingClassifier,GradientBoostingRegressor, RandomForestClassifier, ExtraTreesClassifier
+from lightgbm import LGBMRegressor,LGBMClassifier
+from sklearn.ensemble import GradientBoostingClassifier,GradientBoostingRegressor, RandomForestClassifier, ExtraTreesClassifier,RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold, KFold, cross_val_score
 from sklearn.metrics import mean_squared_error,mean_absolute_error
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import StandardScaler
 from xgboost.sklearn import XGBClassifier
-from NFLBigDataBowl import feature
+# from NFLBigDataBowl import feature
+from NFLBigDataBowl.online import model_NN_1363
 from NFLBigDataBowl import logger
 
 cpu_jobs = os.cpu_count() - 1
 log = logger.get_logger()
 
+def metric_crps(model, X_test, y_test):
+    y_true = np.clip(np.cumsum(y_test, axis=1), 0, 1)
+    y_pred = model.predict(X_test)
+    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+    crps = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
+    # print(crps)
+    return -crps # 要求是浮点数，并且分数越高越好（因此加了负号）
 
 def fit_eval_metric(estimator, X, y, name=None, X_test = None, y_test = None):
     if name is None:
@@ -37,14 +46,9 @@ def fit_eval_metric(estimator, X, y, name=None, X_test = None, y_test = None):
     if X_test is None:
         estimator.fit(X, y)
     else:
-        # train_data, test_data = train_test_split(X,shuffle=True)
-        # X = train_data
-        # y = train_data.pop('Yards')
-        # X_test = test_data
-        # y_test = X_test.pop('Yards')
-        if name is 'XGBClassifier' or name is 'LGBMRegressor':
+        if name is 'XGBClassifier' or name is 'LGBMClassifier':
             print("early stopping")
-            estimator.fit(X, y, eval_set = [(X,y),(X_test,y_test)],early_stopping_rounds=100)
+            estimator.fit(X, y, eval_set = [(X,y),(X_test,y_test)],early_stopping_rounds=40, eval_metric=metric_crps)
         else:
             estimator.fit(X, y)
     # results = estimator.evals_result
@@ -62,6 +66,18 @@ def fit_eval_metric(estimator, X, y, name=None, X_test = None, y_test = None):
     return estimator
 
 
+def get_train_data():
+    path = 'cache_feature.csv'
+
+    if os.path.exists(path):
+        train = pd.read_csv(path)
+    else:
+        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
+        outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+        train = model_NN_1363.create_features(train, False)
+        train.to_csv(path, index=False)
+    return train
+
 def grid_search(estimator, param_grid):
     start = datetime.datetime.now()
 
@@ -70,29 +86,38 @@ def grid_search(estimator, param_grid):
     print(param_grid)
     print()
 
-    data = feature.get_train_tree_data()
+    train_basetable = get_train_data()
+    X = train_basetable
+    yards = X.Yards
 
-    data, _ = train_test_split(data, random_state=0)
+    y = np.zeros((yards.shape[0], 199))
+    for idx, target in enumerate(list(yards)):
+        y[idx][99 + target] = 1
+    X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
-    # X = data.copy().drop(columns='Coupon_id')
-    X = data.copy()
-    y = X.pop('Yards')
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
+    print(X_train.shape, y_train.shape)
+    print(X_val.shape, y_val.shape)
+    # data = feature.get_train_tree_data()
 
     estimator_name = estimator.__class__.__name__
     n_jobs = cpu_jobs
     # if estimator_name is 'XGBClassifier' or estimator_name is 'LGBMClassifier' or estimator_name is 'CatBoostClassifier':
     #     n_jobs = 1
 
-    clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring='neg_mean_absolute_error', n_jobs=n_jobs,
-                       cv=5
-                       )
+    # clf = GridSearchCV(estimator=estimator, param_grid=param_grid, n_jobs=n_jobs, cv=5)
+    # clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring='neg_mean_absolute_error', n_jobs=n_jobs,cv=5)
+    clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring=metric_crps, n_jobs=n_jobs, cv=5)
 
-    clf = fit_eval_metric(clf, X, y, estimator_name)  # 拟合评估指标
+    clf = fit_eval_metric(clf, X_train, y_train, estimator_name, X_test=X_val, y_test=y_val)  # 拟合评估指标
 
     means = clf.cv_results_['mean_test_score']
     stds = clf.cv_results_['std_test_score']
     for mean, std, params in zip(means, stds, clf.cv_results_['params']):
-        print('%0.5f (+/-%0.05f) for %r' % (mean, std * 2, params))
+        print('%0.10f (+/-%0.05f) for %r' % (mean, std * 2, params))
     print()
     print('best params', clf.best_params_)
     print('best score', clf.best_score_)
@@ -139,22 +164,36 @@ def grid_search_auto(steps, params, estimator):
 
                 best_params, best_score = grid_search(estimator.set_params(**params), param_grid)
 
-                # 找到最优参数或者当前的得分best_score已经低于上一轮的score时结束
-                if best_params[name] == params[name] or score > best_score:
+                # 找到最优参数或者当前的得分best_score已经低于上一轮的score时结束(这里的低于或高于看具体的评价函数)
+                if best_params[name] == params[name]:
                     print("got best params, round over:",estimator.__class__.__name__, params)
                     break
+
+                if score > best_score:
+                    print("score > best_score, round over:",estimator.__class__.__name__, params)
+                    break
+
 
                 # 当产生比当前结果更优的解时，则在此方向是继续寻找
                 direction = (best_params[name] - params[name]) // abs(best_params[name] - params[name])  # 决定了每次只能跑两个参数
                 start = stop = best_params[name] + step['step'] * direction # 根据方向让下一轮每次搜索一个参数
 
-                score = best_score
                 params[name] = best_params[name]
 
                 if best_params[name] - step['step'] < step['min'] or (
                         step['max'] != 'inf' and best_params[name] + step['step'] > step['max']):
                     print("reach params limit, round over.", estimator.__class__.__name__, params)
                     break
+
+                if abs(best_score - score) < abs(.0001 * score):
+                    print("abs(best_score - score) < abs(.0001 * score), round over:", best_score - score,
+                          estimator.__class__.__name__, params)
+                    score = best_score
+                    print("update best score, best score = :", score)
+                    break
+
+                score = best_score
+                print("update best score, best score = :", score)
 
                 print("Next round search: ", estimator.__class__.__name__, params)
 
@@ -191,7 +230,7 @@ def grid_search_gbdt(get_param=False):
         'min_samples_leaf': 70,
         'subsample': .8,
 
-        'random_state': 0
+        'random_state': 42
     }
 
     if get_param:
@@ -284,7 +323,7 @@ def grid_search_lgb(get_param=False):
         'subsample': .8,
         'colsample_bytree': .8,
         'n_jobs': cpu_jobs,
-        'random_state': 0,
+        'random_state': 42,
     }
 
     if get_param:
@@ -323,7 +362,7 @@ def grid_search_cat(get_param=False):
         'one_hot_max_size': 2,
         'bootstrap_type': 'Bernoulli',
         'leaf_estimation_method': 'Newton',
-        'random_state': 0,
+        'random_state': 42,
         'verbose': False,
         'eval_metric': 'AUC',
         'thread_count': cpu_jobs
@@ -348,35 +387,44 @@ def grid_search_rf(criterion='gini', get_param=False):
     if criterion == 'gini':
         params = {
             # 10
-            'n_estimators': 3090,
-            'max_depth': 15,
-            'min_samples_split': 2,
-            'min_samples_leaf': 1,
+            # 'n_estimators': 250,
+            # 'max_depth': 4,
+            # 'min_samples_split': 3,
+            # 'min_samples_leaf': 7,
+            'n_estimators': 450,
+            'min_samples_split': 5,
+            'min_samples_leaf': 13,
+            'max_features':0.5,
 
-            'criterion': 'gini',
-            'random_state': 0
+            'bootstrap': False,
+            # 'verbose':1,
+            # 'criterion': 'gini',
+            'random_state': 42
         }
     else:
         params = {
-            'n_estimators': 3110,
-            'max_depth': 13,
-            'min_samples_split': 70,
-            'min_samples_leaf': 10,
-            'criterion': 'entropy',
-            'random_state': 0
+            'n_estimators': 200,
+            'max_depth': 6,
+            'min_samples_split': 7,
+            'min_samples_leaf': 15,
+
+            'bootstrap':False,
+            # 'criterion': 'entropy',
+            'random_state': 42
         }
 
     if get_param:
         return params
 
     steps = {
-        'n_estimators': {'step': 10, 'min': 1, 'max': 'inf'},
-        'max_depth': {'step': 1, 'min': 1, 'max': 'inf'},
-        'min_samples_split': {'step': 2, 'min': 2, 'max': 'inf'},
-        'min_samples_leaf': {'step': 2, 'min': 1, 'max': 'inf'},
+        # 'n_estimators': {'step': 50, 'min': 1, 'max': 'inf'},
+        # 'max_depth': {'step': 1, 'min': 1, 'max': 'inf'},
+        # 'min_samples_split': {'step': 2, 'min': 2, 'max': 'inf'},
+        # 'min_samples_leaf': {'step': 2, 'min': 1, 'max': 'inf'},
+        'max_features': {'step': 0.1, 'min': 0.1, 'max': 1},
     }
 
-    grid_search_auto(steps, params, RandomForestClassifier())
+    grid_search_auto(steps, params, RandomForestRegressor())
 
 
 def grid_search_et(criterion='gini', get_param=False):
@@ -389,7 +437,7 @@ def grid_search_et(criterion='gini', get_param=False):
             'min_samples_leaf': 1,
 
             'criterion': 'gini',
-            'random_state': 0,
+            'random_state': 42,
         }
     else:
         params = {
@@ -398,7 +446,7 @@ def grid_search_et(criterion='gini', get_param=False):
             'min_samples_split': 70,
             'min_samples_leaf': 10,
             'criterion': 'entropy',
-            'random_state': 0
+            'random_state': 42
         }
 
     if get_param:
@@ -566,7 +614,7 @@ def train_et_entropy():
         'min_samples_split': 70,
         'min_samples_leaf': 10,
         'criterion': 'entropy',
-        'random_state': 0
+        'random_state': 42
     })
 
     return train_et(clf)
@@ -612,7 +660,7 @@ def train(clf):
     train_data, test_data = train_test_split(data,
                                              # train_size=1000,
                                              # train_size=100000,
-                                             random_state=0,
+                                             random_state=42,
                                              shuffle=True
                                              )
 
@@ -717,7 +765,7 @@ def blending(predict_X=None):
     y = np.asarray(y)
 
     _, X_submission, _, y_test_blend = train_test_split(X, y,
-                                                        random_state=0
+                                                        random_state=42
                                                         )
 
     if predict_X is not None:
@@ -726,7 +774,7 @@ def blending(predict_X=None):
     X, _, y, _ = train_test_split(X, y,
                                   train_size=100000,
                                   # train_size=1000,
-                                  random_state=0
+                                  random_state=42
                                   )
 
     # np.random.seed(0)
@@ -803,7 +851,7 @@ if __name__ == '__main__':
     # feature_importance_score()
 
     # grid_search_gbdt()
-    train_gbdt()
+    # train_gbdt()
     # predict('gbdt')
 
     # grid_search_xgb()
@@ -818,7 +866,7 @@ if __name__ == '__main__':
     # train_cat()
     # predict('cat')
 
-    # grid_search_rf()
+    grid_search_rf()
     # train_rf_gini()
     # predict('rf_gini')
 

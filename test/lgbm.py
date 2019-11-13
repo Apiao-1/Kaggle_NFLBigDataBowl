@@ -124,7 +124,7 @@ def transform_test(test):
 
 
 if __name__ == '__main__':
-    train = pd.read_csv('../data/train.csv')
+    train = pd.read_csv('../data/train.csv')[:2200]
 
     train.loc[train.VisitorTeamAbbr == "ARI", 'VisitorTeamAbbr'] = "ARZ"
     train.loc[train.HomeTeamAbbr == "ARI", 'HomeTeamAbbr'] = "ARZ"
@@ -212,10 +212,10 @@ if __name__ == '__main__':
         models.append(clf)
 
         # plot feature importance
-        fscores = pd.Series(clf.feature_importances_, X_train2.columns).sort_values(ascending=False)
-        fscores.plot(kind='bar', title='Feature Importance', figsize=(20, 10))
-        plt.ylabel('Feature Importance Score')
-        plt.show()
+        # fscores = pd.Series(clf.feature_importances_, X_train2.columns).sort_values(ascending=False)
+        # fscores.plot(kind='bar', title='Feature Importance', figsize=(20, 10))
+        # plt.ylabel('Feature Importance Score')
+        # plt.show()
 
         temp_predict = clf.predict(X_test2)
         stack_train[test_index] = temp_predict

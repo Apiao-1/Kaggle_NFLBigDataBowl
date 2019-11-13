@@ -254,8 +254,8 @@ class MultiLGBMClassifier():
             ## train each model
             self.models[k].fit(x, (y + k) // self.resolution)
             ## (0,1,2,3,4,5,6,7,8,9) -> (0,0,0,0,0,1,1,1,1,1) -> 乘resolution+set之后(0,5)
-            tmp = (y + k) // self.resolution
-            tmp2 = set(tmp)
+            # tmp = (y + k) // self.resolution
+            # tmp2 = set(tmp)
             # 把所有label划分至199 / resolution个桶中，然后以每个桶的值代表这个label，所以要再乘resolution
             # 第一次得到的label都是5的倍数，为了让结果更准确，加上滑窗法思想，这样加上5次不同偏移之后所得的label就是0-199范围了
             classes = np.sort(list(set((y + k) // self.resolution))) * self.resolution - k
@@ -463,6 +463,7 @@ if __name__ == '__main__':
             model = MultiLGBMClassifier(resolution=5, params=params)
             model.fit(train_x[tr_inds], train_y_raw.values[tr_inds])
             preds = model.predict(train_x[val_inds])
+            print(preds.shape) # (20, 199)
             loss = np.mean((train_y[val_inds] - preds) ** 2)
             models.append(model)
             print(k_fold, loss)

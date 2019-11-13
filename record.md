@@ -2,6 +2,7 @@
 ## NN
 1. https://www.kaggle.com/apiao1/location-eda-8eb410 
    V12 cv:0.012740 lb:.1362 ，11->12 增加Grass特征
+   一样的V4 https://www.kaggle.com/apiao1/model-nn/output?scriptVersionId=23301598
    
 1. https://www.kaggle.com/apiao1/location-eda-8eb410?scriptVersionId=23289148 
    V11 cv:0.012725 lb:.1362 表现次于1
