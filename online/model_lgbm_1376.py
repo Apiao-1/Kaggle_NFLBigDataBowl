@@ -372,11 +372,15 @@ models = []
 kf = KFold(n_splits=5, random_state=42)
 score = []
 
-y = np.argmax(y, axis=1) # 这里还有步隐含的含义：即把负的标签通过取index变为正的了
+# y = np.argmax(y, axis=1) # 这里还有步隐含的含义：即把负的标签通过取index变为正的了
 
 for i, (tdx, vdx) in enumerate(kf.split(X, y)):
     print(f'Fold : {i}')
     X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+    y_true = y_val.copy()
+
+    y_train = np.argmax(y_train, axis=1)
+    y_val = np.argmax(y_val, axis=1)
     print(X_train.shape, y_train.shape) # (800, 199)
     print(X_val.shape, y_val.shape) # (800, 199)
     # model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
@@ -415,7 +419,7 @@ for i, (tdx, vdx) in enumerate(kf.split(X, y)):
     # y_pred = model.predict(X_val)
     y_pred = model.predict(X_val, num_iteration=model.best_iteration)
     print(y_pred.shape) # (200, 199)
-    score_ = metric_crps(np.expand_dims(y_val, axis=1), y_pred)
+    score_ = metric_crps(y_true, y_pred)
     print(score_)
     score.append(score_)
     models.append(model)
