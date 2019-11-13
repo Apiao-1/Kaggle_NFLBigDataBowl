@@ -9,6 +9,11 @@ from sklearn.preprocessing import StandardScaler
 import datetime
 import warnings
 import os
+import re
+from tqdm import tqdm_notebook
+from sklearn.metrics import roc_auc_score, mean_squared_error, mean_absolute_error
+from lightgbm import LGBMRegressor
+
 
 warnings.filterwarnings("ignore")
 
@@ -21,16 +26,6 @@ def metric_crps(y_true, y_pred):
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
     return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
 
-def early_metric_crps(y_true, y_pred):
-    print(y_pred.shape, y_true.shape)
-    y = np.zeros((y_true.shape[0], 199))
-    for idx, target in enumerate(list(y_true)):
-        y[idx][99 + target] = 1
-    y_true = np.clip(np.cumsum(y, axis=1), 0, 1)
-    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-    crps = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
-    # print(crps)
-    return "CRPS", crps
 
 def strtoseconds(txt):
     txt = txt.split(':')
@@ -118,7 +113,6 @@ def transform_StadiumType(txt):
         return 0
 
     return np.nan
-
 
 def create_features(df, deploy=False):
     def new_X(x_coordinate, play_direction):
@@ -341,98 +335,154 @@ def create_features(df, deploy=False):
 
     return basetable
 
+def get_cdf_df(yards_array):
+    pdf, edges = np.histogram(yards_array, bins=199,
+                              range=(-99, 100), density=True)
+    cdf = pdf.cumsum().clip(0, 1)
+    cdf_df = pd.DataFrame(data=cdf.reshape(-1, 1).T,
+                          columns=['Yards' + str(i) for i in range(-99, 100)])
+    return cdf_df
+
+
+def get_score(y_pred, cdf, w, dist_to_end):
+    y_pred = int(y_pred)
+    if y_pred == w:
+        y_pred_array = cdf.copy()
+    elif y_pred - w > 0:
+        y_pred_array = np.zeros(199)
+        y_pred_array[(y_pred - w):] = cdf[:(-(y_pred - w))].copy()
+    elif w - y_pred > 0:
+        y_pred_array = np.ones(199)
+        y_pred_array[:(y_pred - w)] = cdf[(w - y_pred):].copy()
+    y_pred_array[-1] = 1
+    y_pred_array[(dist_to_end + 99):] = 1
+    return y_pred_array
+
+
+def get_score_pingyi1(y_pred, y_true, cdf, w, dist_to_end):
+    y_pred = int(y_pred)
+    if y_pred == w:
+        y_pred_array = cdf.copy()
+    elif y_pred - w > 0:
+        y_pred_array = np.zeros(199)
+        y_pred_array[(y_pred - w):] = cdf[:(-(y_pred - w))].copy()
+    elif w - y_pred > 0:
+        y_pred_array = np.ones(199)
+        y_pred_array[:(y_pred - w)] = cdf[(w - y_pred):].copy()
+    y_pred_array[-1] = 1
+    y_pred_array[(dist_to_end + 99):] = 1
+    y_true_array = np.zeros(199)
+    y_true_array[(y_true + 99):] = 1
+    return np.mean((y_pred_array - y_true_array) ** 2)
+
+
+def CRPS_pingyi1(y_preds, y_trues, w, cdf, dist_to_ends):
+    if len(y_preds) != len(y_trues):
+        print('length does not match')
+        return None
+    n = len(y_preds)
+    tmp = []
+    for a, b, c in zip(y_preds, y_trues, dist_to_ends):
+        tmp.append(get_score_pingyi1(a, b, cdf, w, c))
+    return np.mean(tmp)
+
+
 TRAIN_OFFLINE = False
 
-# if __name__ == '__main__':
-path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
-if TRAIN_OFFLINE:
-    if os.path.exists(path):
-        train_basetable = pd.read_csv(path)
+if __name__ == '__main__':
+    path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature1.csv'
+    if TRAIN_OFFLINE:
+        if os.path.exists(path):
+            train_basetable = pd.read_csv(path)[:2200]
+        else:
+            train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:2200]
+
+            # 未加入特征中
+            train['own_field'] = (train['FieldPosition'] == train['PossessionTeam']).astype(int)
+            dist_to_end_train = train.apply(
+                lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
+
+            outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+            train_basetable = create_features(train, False)
+            # train_basetable.to_csv(path, index=False)
     else:
-        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
+        train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+        train['own_field'] = (train['FieldPosition'] == train['PossessionTeam']).astype(int)
+        dist_to_end_train = train.apply(
+            lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
+
         outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
         train_basetable = create_features(train, False)
-        train_basetable.to_csv(path, index=False)
-else:
-    train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
-    outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
-    train_basetable = create_features(train, False)
 
-X = train_basetable.copy()
-yards = X.Yards
-y = np.zeros((yards.shape[0], 199))
-for idx, target in enumerate(list(yards)):
-    y[idx][99 + target] = 1
-X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
+    X = train_basetable.copy()
+    y_train = X.Yards
+    X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
-scaler = StandardScaler()
-X = scaler.fit_transform(X)
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X)
+    # X_train = X
 
-models = []
-kf = KFold(n_splits=5, random_state=42)
-score = []
+    cdf = get_cdf_df(y_train).values.reshape(-1, )
 
-y = np.argmax(y, axis=1) # 这里还有步隐含的含义：即把负的标签通过取index变为正的了
+    kf = KFold(n_splits=5, random_state=42)
+    resu1 = 0
+    impor1 = 0
+    resu2_cprs = 0
+    resu3_mae = 0
+    ##y_pred = 0
+    stack_train = np.zeros([X_train.shape[0], ])
+    models = []
+    for train_index, test_index in kf.split(X_train, y_train):
+        # X_train2 = X_train.iloc[train_index, :]
+        # y_train2 = y_train.iloc[train_index]
+        # X_test2 = X_train.iloc[test_index, :]
+        # y_test2 = y_train.iloc[test_index]
+        X_train2 = X_train[train_index, :]
+        y_train2 = y_train[train_index]
+        X_test2 = X_train[test_index, :]
+        y_test2 = y_train[test_index]
+        clf = lgb.LGBMRegressor(n_estimators=10000, random_state=42
+                                , learning_rate=0.005, importance_type='gain',
+                                n_jobs=-1, metric='mae')
+        clf.fit(X_train2, y_train2, eval_set=[(X_train2, y_train2), (X_test2, y_test2)], early_stopping_rounds=200,
+                verbose=False)
+        models.append(clf)
 
-for i, (tdx, vdx) in enumerate(kf.split(X, y)):
-    print(f'Fold : {i}')
-    X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
-    print(X_train.shape, y_train.shape) # (800, 199)
-    print(X_val.shape, y_val.shape) # (800, 199)
-    # model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
-    #                               n_estimators=50, n_jobs=-1, random_state=42)
-    param = {'num_leaves': 50,  # Original 50
-             'min_data_in_leaf': 30,  # Original 30
-             'n_estimators': 500,
-             'objective': 'multiclass',
-             'num_class': 199,  # 199 possible places
-             'max_depth': 6,
-             'learning_rate': 0.01,
-             'min_split_gain': 0,
-             'min_child_weight': 1e-3,
-             'min_child_samples': 21,
-             'subsample': .8,
-             'colsample_bytree': .8,
-             # "boosting": "gbdt",
-             # "feature_fraction": 0.7,  # 0.9
-             # "bagging_freq": 1,
-             # "bagging_fraction": 0.9,
-             # "bagging_seed": 11,
-             "metric": "multi_logloss",
-             # "lambda_l1": 0.1,
-             "verbosity": -1,
+        temp_predict = clf.predict(X_test2)
+        stack_train[test_index] = temp_predict
+        mse = mean_squared_error(y_test2, temp_predict)
+        crps = CRPS_pingyi1(temp_predict, y_test2, 4, cdf, dist_to_end_train.iloc[test_index])
+        mae = mean_absolute_error(y_test2, temp_predict)
+        print(crps)
 
-             "seed": 42,
-             }
+        resu1 += mse / 5
+        resu2_cprs += crps / 5
+        resu3_mae += mae / 5
+        impor1 += clf.feature_importances_ / 5
+    print('mean mse:', resu1)
+    print('oof mse:', mean_squared_error(y_train, stack_train))
+    print('mean mae:', resu3_mae)
+    print('oof mae:', mean_absolute_error(y_train, stack_train))
+    print('mean cprs:', resu2_cprs)
+    print('oof cprs:', CRPS_pingyi1(stack_train, y_train, 4, cdf, dist_to_end_train))
 
-    trn_data = lgb.Dataset(X_train, label=y_train)
-    val_data = lgb.Dataset(X_val, label=y_val)
-    num_round = 10000
-    # model.fit(X_train, y_train, eval_set = [(X_train,y_train),(X_val, y_val)], early_stopping_rounds=60)
-    model = lgb.train(param, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=100,
-                      early_stopping_rounds=60)
 
-    # y_pred = model.predict(X_val)
-    y_pred = model.predict(X_val, num_iteration=model.best_iteration)
-    print(y_pred.shape) # (200, 199)
-    score_ = metric_crps(np.expand_dims(y_val, axis=1), y_pred)
-    print(score_)
-    score.append(score_)
-    models.append(model)
-print(np.mean(score))
-from kaggle.competitions import nflrush
+    from kaggle.competitions import nflrush
 
-env = nflrush.make_env()
-for (test_df, sample_prediction_df) in env.iter_test():
-    basetable = create_features(test_df, deploy=True)
+    env = nflrush.make_env()
+    for (test_df, sample_prediction_df) in env.iter_test():
+        basetable = create_features(test_df, deploy=True)
 
-    basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-    scaled_basetable = scaler.transform(basetable)
+        basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+        scaled_basetable = scaler.transform(basetable)
 
-    y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
-    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+        pred_value = 0
+        for model in models:
+            pred_value += model.predict(scaled_basetable)[0] / 5
+        y_pred = list(get_score(pred_value, cdf, 4, dist_to_end_train.values[0]))
+        y_pred = np.array(y_pred).reshape(1, 199)
+        preds_df = pd.DataFrame(data=y_pred, columns=sample_prediction_df.columns)
 
-    preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
-    env.predict(preds_df)
+        env.predict(preds_df)
 
-env.write_submission_file()
+    env.write_submission_file()

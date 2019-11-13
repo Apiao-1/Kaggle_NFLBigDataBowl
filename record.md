@@ -25,4 +25,7 @@ V5 cv:0.50477 lb:.1386
 V7 cv:0.50511 lb:.1376
 
 2. 用LGBMRegressor,得到预测值后加函数展开， https://www.kaggle.com/newbielch/lgbm-regression-view
+https://www.kaggle.com/apiao1/model-lgbm-regression/notebook?scriptVersionId=23357454
+V4 cv:0.01360 lb:0.01412(不及原文的成绩，原文的cv0.01349,lb0.01401) 应该过拟合很严重，调参应该有较好结果
+
 3. LGBMClassifier + 平滑， https://www.kaggle.com/mrkmakr/lgbm-multiple-classifier
