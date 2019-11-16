@@ -1,4 +1,5 @@
 # https://www.kaggle.com/enzoamp/nfl-lightgbm/code
+# 这个版本的stacking不再试用，原因：预测出的概率不是严格递增的
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 import numpy as np
