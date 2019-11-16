@@ -17,11 +17,12 @@ import re
 
 from keras.utils import to_categorical
 from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
-from sklearn.metrics import f1_score
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.svm import SVR
 
 warnings.filterwarnings("ignore")
 
-pd.set_option('display.max_columns', 50)
+pd.set_option('display.max_columns', 250)
 pd.set_option('display.max_rows', 150)
 
 
@@ -408,7 +409,7 @@ def get_NN_model(x_tr, y_tr, x_val, y_val):
 
     es = EarlyStopping(monitor='CRPS_score_val',
                        mode='min',
-                       restore_best_weights=True,
+                       # restore_best_weights=True,
                        verbose=0,
                        patience=10)
 
@@ -430,18 +431,13 @@ def get_NN_model(x_tr, y_tr, x_val, y_val):
               verbose=0)
     # model.load_weights("best_model.h5")
 
-    y_pred = model.predict(x_val)
-    y_true = y_val
-    val_s = metric_crps(y_true, y_pred)
-    crps_round = np.round(val_s, 7)
-
-    return model, crps_round
+    return model
 
 
 def train_lgb(X, y, n_splits, single=False):
     lgb_models = []
     scores = []
-    predict_test = np.zeros((X.shape[0], len(clfs)))
+    predict_test = np.zeros((y.shape[0], y.shape[1]))
     kf = KFold(n_splits=n_splits, random_state=42)
     for i, (tdx, vdx) in enumerate(kf.split(X, y)):
         # print(f'Fold : {i}')
@@ -484,16 +480,18 @@ def train_lgb(X, y, n_splits, single=False):
         trn_data = lgb.Dataset(X_train, label=y_train)
         val_data = lgb.Dataset(X_val, label=y_val)
         num_round = 10000
-        model = lgb.train(param, trn_data, num_round, valid_sets=[trn_data, val_data],verbose_eval=False,
+        model = lgb.train(param, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=False,
                           early_stopping_rounds=60)
-        lgb_models.append(model)
         y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+
+        predict_test[vdx] = y_pred
         # print(y_pred.shape)  # (200, 199)
         score_ = metric_crps(y_true, y_pred)
         # print(score_)
         scores.append(score_)
         lgb_models.append(model)
     print("lgb mean score:", np.mean(scores))
+    predict_test = np.clip(np.cumsum(predict_test, axis=1), 0, 1)
 
     if single:
         # min_index = 0
@@ -504,11 +502,13 @@ def train_lgb(X, y, n_splits, single=False):
         #         min_index = i
         # return lgb_models[min_index]
         return lgb_models[0]
-    return lgb_models
+    return lgb_models, predict_test
+
 
 def train_rf(X, y, n_splits, single=False):
     rf_models = []
     scores = []
+    predict_test = np.zeros((y.shape[0], y.shape[1]))
     kf = KFold(n_splits=n_splits, random_state=42)
     for i, (tdx, vdx) in enumerate(kf.split(X, y)):
         X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
@@ -518,13 +518,15 @@ def train_rf(X, y, n_splits, single=False):
                                       n_estimators=250, n_jobs=-1, random_state=42)
         model.fit(X_train, y_train)
         y_pred = model.predict(X_val)
+        predict_test[vdx] = y_pred
         # print(y_pred.shape) # (200, 199)
         score_ = metric_crps(y_val, y_pred)
         # print(score_)
         scores.append(score_)
         rf_models.append(model)
     print("rf mean score:", np.mean(scores))
-
+    predict_test = np.clip(np.cumsum(predict_test, axis=1), 0, 1)
+    # print(predict_test.shape) # (2200, 199)
     if single:
         # min_index = 0
         # min = scores[min_index]
@@ -534,20 +536,28 @@ def train_rf(X, y, n_splits, single=False):
         #         min_index = i
         # return rf_models[min_index]
         return rf_models[0]
-    return rf_models
+    return rf_models, predict_test
 
-def train_NN(X, y, n_splits, single=False, seed = 42):
+
+def train_NN(X, y, n_splits, single=False, seed=42):
     models = []
     scores = []
+    predict_test = np.zeros((y.shape[0], y.shape[1]))
     kf = KFold(n_splits=n_splits, random_state=seed)
     for i, (tdx, vdx) in enumerate(kf.split(X, y)):
         X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
         # print(X_train.shape, y_train.shape)  # (800, 199)
         # print(X_val.shape, y_val.shape)
-        model, crps = get_NN_model(X_train, y_train, X_val, y_val)
+        model = get_NN_model(X_train, y_train, X_val, y_val)
+        y_pred = model.predict(X_val)
+        predict_test[vdx] = y_pred
+        crps = metric_crps(y_val, y_pred)
+        # crps = np.round(val_s, 7)
+
         models.append(model)
         scores.append(crps)
     print("NN mean score:", np.mean(scores))
+    predict_test = np.clip(np.cumsum(predict_test, axis=1), 0, 1)
 
     if single:
         # min_index = 0
@@ -558,7 +568,7 @@ def train_NN(X, y, n_splits, single=False, seed = 42):
         #         min_index = i
         # return models[min_index]
         return models[0]
-    return models
+    return models, predict_test
 
 
 TRAIN_OFFLINE = False
@@ -567,7 +577,7 @@ if __name__ == '__main__':
     path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
     if TRAIN_OFFLINE:
         if os.path.exists(path):
-            train_basetable = pd.read_csv(path)
+            train_basetable = pd.read_csv(path)[:1000]
         else:
             train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
             outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
@@ -584,19 +594,48 @@ if __name__ == '__main__':
     for idx, target in enumerate(list(yards)):
         y[idx][99 + target] = 1
     X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
-
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    clfs = ['NN', 'rf', 'lgb']
     models = []
+    all_test = []
+    clfs = ['rf', 'lgb', 'NN']
     for j, v in enumerate(clfs):
-        clf = eval('train_%s' % v)(X, y, False)
+        clf, single = eval('train_%s' % v)(X, y, 5, False)
         models.append(clf)
-    models.append(train_NN(X,y, 4, False, seed=43))
+        all_test.append(single)
+    print(len(all_test), len(all_test[0]))
+    print(len(models), len(models[0]))
+
+    print('blending')
+    clf_map = {}
+
+    for idx, target in enumerate(list(yards)):
+        y[idx][99 + target:] = 1
+
+    clf_beg = 50
+    clf_end = 150
+    for idx in range(clf_beg, clf_end):
+        single_flag = True
+        global single_train
+        for v in all_test:
+            if single_flag:
+                single_train = v[:, idx].reshape(-1, 1)
+                # print(single_train.shape)
+                single_flag = False
+            else:
+                single_train = np.concatenate((single_train, v[:, idx].reshape(-1, 1)), axis=1)
+                # print(single_train.shape)
+        # print(single_train.shape)
+        single_clf = SVR()
+        # single_clf = Ridge()
+        single_clf.fit(single_train, y[:, idx])
+        clf_map[idx] = single_clf
+        # print(clf_map)
+
     # flatten
-    models = sum(models, [])
-    print(len(models))
+    # models = sum(models, [])
+    # print(len(models))
 
     from kaggle.competitions import nflrush
 
@@ -607,12 +646,37 @@ if __name__ == '__main__':
         basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
         scaled_basetable = scaler.transform(basetable)
 
-        y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
-        y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+        y_conduct = []
+        for model_list in models:
+            y_pred = np.mean([model.predict(scaled_basetable) for model in model_list], axis=0)
+            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+            y_conduct.append(y_pred)
+            # if flag:
+            #     y_conduct = y_pred
+            #     flag = False
+            # else:
+            #     y_conduct = np.concatenate((y_conduct, y_pred))
 
-        preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+        #         print(len(y_conduct))
+        # y_pred = clf.predict_proba(y_conduct)
+        y_ans = np.zeros((1, 199))
+
+        for idx in range(clf_beg, clf_end):
+            single_flag = True
+            global single_test
+            for v in y_conduct:
+                if single_flag:
+                    single_test = v[:, idx].reshape(-1, 1)
+                    single_flag = False
+                else:
+                    single_test = np.concatenate((single_test, v[:, idx].reshape(-1, 1)), axis=1)
+            single_pred = clf_map[idx].predict(single_test)
+            y_ans[:, idx] = single_pred[0]
+
+        y_ans[clf_end:] = 1
+        y_ans = np.clip(y_ans, 0, 1)
+        preds_df = pd.DataFrame(data=y_ans, columns=sample_prediction_df.columns)
         preds_df.iloc[:, :50] = 0
         preds_df.iloc[:, -50:] = 1
         env.predict(preds_df)
-
     env.write_submission_file()
