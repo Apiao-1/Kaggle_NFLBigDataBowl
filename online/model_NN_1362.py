@@ -6,10 +6,11 @@ if TRAIN_ABLE_FALSE:
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split, KFold
-import sklearn.metrics as mtr
-import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
+from keras.layers import Dense, Input, Flatten, concatenate, Dropout, Lambda
+from keras.models import Model
+import re
+from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
 
 from keras.layers import BatchNormalization
 import datetime
@@ -107,12 +108,24 @@ def transform_StadiumType(txt):
 
     return np.nan
 
+def transform_time_all(str1, quarter):
+    if quarter <= 4:
+        return 15 * 60 - (int(str1[:2]) * 60 + int(str1[3:5])) + (quarter - 1) * 15 * 60
+    if quarter == 5:
+        return 10 * 60 - (int(str1[:2]) * 60 + int(str1[3:5])) + (quarter - 1) * 15 * 60
+
 def create_features(df, deploy=False):
     def new_X(x_coordinate, play_direction):
         if play_direction == 'left':
             return 120.0 - x_coordinate
         else:
             return x_coordinate
+
+    def new_Y(y_coordinate, play_direction):
+        if play_direction == 'left':
+            return 160.0/3 - y_coordinate
+        else:
+            return y_coordinate
 
     def new_line(rush_team, field_position, yardline):
         if rush_team == field_position:
@@ -153,6 +166,7 @@ def create_features(df, deploy=False):
 
     def update_orientation(df, yardline):
         df['X'] = df[['X', 'PlayDirection']].apply(lambda x: new_X(x[0], x[1]), axis=1)
+        df['Y'] = df[['Y', 'PlayDirection']].apply(lambda x: new_Y(x[0], x[1]), axis=1) #v24
         df['Orientation'] = df[['Orientation', 'PlayDirection']].apply(lambda x: new_orientation(x[0], x[1]), axis=1)
         df['Dir'] = df[['Dir', 'PlayDirection']].apply(lambda x: new_orientation(x[0], x[1]), axis=1)
 
@@ -215,14 +229,21 @@ def create_features(df, deploy=False):
 
         ## Height
         df['PlayerHeight_dense'] = df['PlayerHeight'].apply(lambda x: 12 * int(x.split('-')[0]) + int(x.split('-')[1]))
-
         add_new_feas.append('PlayerHeight_dense')
+
+        # df['PlayerBMI'] = 703 * (df['PlayerWeight'] / (df['PlayerHeight_dense']) ** 2)
+        # add_new_feas.append('PlayerBMI')
 
         ## Time
         df['TimeHandoff'] = df['TimeHandoff'].apply(lambda x: datetime.datetime.strptime(x, "%Y-%m-%dT%H:%M:%S.%fZ"))
         df['TimeSnap'] = df['TimeSnap'].apply(lambda x: datetime.datetime.strptime(x, "%Y-%m-%dT%H:%M:%S.%fZ"))
 
-        df['TimeDelta'] = df.apply(lambda row: (row['TimeHandoff'] - row['TimeSnap']).total_seconds(), axis=1)
+        # df['TimeDelta'] = df.apply(lambda row: (row['TimeHandoff'] - row['TimeSnap']).total_seconds(), axis=1)
+        # add_new_feas.append('TimeDelta')
+
+        # df['time_end'] = df.apply(lambda x: transform_time_all(x.loc['GameClock'], x.loc['Quarter']), axis=1)
+        # add_new_feas.append('time_end')
+
         df['PlayerBirthDate'] = df['PlayerBirthDate'].apply(lambda x: datetime.datetime.strptime(x, "%m/%d/%Y"))
 
         ## Age
@@ -230,6 +251,10 @@ def create_features(df, deploy=False):
         df['PlayerAge'] = df.apply(
             lambda row: (row['TimeHandoff'] - row['PlayerBirthDate']).total_seconds() / seconds_in_year, axis=1)
         add_new_feas.append('PlayerAge')
+
+        # df['GameClock_sec'] = df['GameClock'].apply(strtoseconds)
+        # add_new_feas.append('GameClock_sec')
+
 
         ## WindSpeed
         # df['WindSpeed_ob'] = df['WindSpeed'].apply(
@@ -272,14 +297,22 @@ def create_features(df, deploy=False):
         # train["Week_ob"] = train["Week"].astype("object")
         # train["TimeDelta_ob"] = train["TimeDelta"].astype("object")
 
+
         ## Orientation and Dir
-        df["Orientation_ob"] = df["Orientation"].apply(lambda x: orientation_to_cat(x)).astype("object")
-        df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
+        # df["Orientation_ob"] = df["Orientation"].apply(lambda x: orientation_to_cat(x)).astype("object")
+        # df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
+        # add_new_feas.append("Dir_ob")
+        # add_new_feas.append("Orientation_ob")
+
 
         df["Orientation_sin"] = df["Orientation"].apply(lambda x: np.sin(x / 360 * 2 * np.pi))
         df["Orientation_cos"] = df["Orientation"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
         df["Dir_sin"] = df["Dir"].apply(lambda x: np.sin(x / 360 * 2 * np.pi))
         df["Dir_cos"] = df["Dir"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
+        # df['S_horizontal'] = df['S'] * df['Dir_cos']
+        # df['S_vertical'] = df['S'] * df['Dir_sin']
+        # add_new_feas.append("S_vertical")
+        # add_new_feas.append("S_horizontal")
         add_new_feas.append("Orientation_cos")
         add_new_feas.append("Orientation_sin")
         add_new_feas.append("Dir_sin")
@@ -298,6 +331,10 @@ def create_features(df, deploy=False):
         ## diff Score
         df["diffScoreBeforePlay"] = df["HomeScoreBeforePlay"] - df["VisitorScoreBeforePlay"]
         add_new_feas.append("diffScoreBeforePlay")
+
+        # df["diffScoreBeforePlay_binary_ob"] = (
+        #             train["HomeScoreBeforePlay"] > train["VisitorScoreBeforePlay"])
+        # add_new_feas.append("diffScoreBeforePlay_binary_ob")
 
         static_features = df[df['NflId'] == df['NflIdRusher']][
             add_new_feas + ['GameId', 'PlayId', 'X', 'Y', 'S', 'A', 'Dis', 'Orientation', 'Dir',
@@ -318,6 +355,11 @@ def create_features(df, deploy=False):
 
         return df
 
+    def after_process(train):
+        # 离发球线距离x
+        # train['dist_yardline'] = train['YardLine'] - train['X'] / 0.91
+        return train
+
     yardline = update_yardline(df)
     df = update_orientation(df, yardline)
     back_feats = back_features(df)
@@ -325,21 +367,9 @@ def create_features(df, deploy=False):
     def_feats = defense_features(df)
     static_feats = static_features(df)
     basetable = combine_features(rel_back, def_feats, static_feats, deploy=deploy)
+    basetable = after_process(basetable)
 
     return basetable
-
-
-from keras.layers import Dense, Input, Flatten, concatenate, Dropout, Lambda
-from keras.models import Model
-import keras.backend as K
-import re
-from keras.losses import binary_crossentropy
-from keras.callbacks import EarlyStopping, ModelCheckpoint
-import codecs
-
-from keras.utils import to_categorical
-from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
-from sklearn.metrics import f1_score
 
 
 class CRPSCallback(Callback):
@@ -350,7 +380,7 @@ class CRPSCallback(Callback):
         self.predict_batch_size = predict_batch_size
         self.include_on_batch = include_on_batch
 
-        print('validation shape', len(self.validation))
+        # print('validation shape', len(self.validation))
 
     def on_batch_begin(self, batch, logs={}):
         pass
@@ -463,29 +493,28 @@ if __name__ == '__main__':
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    # X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=12345)
-    # print(X_train.shape, X_val.shape)
-    # print(y_train.shape, y_val.shape)
-
     losses = []
     models = []
-    crps_csv = []
+    mean_crps_csv = []
 
     s_time = time.time()
 
-    for k in range(2):
+    for k in range(5):
         kfold = KFold(5, random_state=42 + k, shuffle=True)
+        crps_csv = []
         for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(yards)):
-            print("-----------")
-            print("-----------")
+            # print("-----------")
+            # print("-----------")
             tr_x, tr_y = X[tr_inds], y[tr_inds]
             val_x, val_y = X[val_inds], y[val_inds]
             model, crps = get_model(tr_x, tr_y, val_x, val_y)
             models.append(model)
-            print("the %d fold crps is %f" % ((k_fold + 1), crps))
+            # print("the %d fold crps is %f" % ((k_fold + 1), crps))
             crps_csv.append(crps)
+        mean_crps_csv.append(np.mean(crps_csv))
+        print("5 folder crps is %f" % np.mean(crps_csv))
 
-    print("mean crps is %f" % np.mean(crps_csv))
+    print("mean crps is %f" % np.mean(mean_crps_csv))
 
     if TRAIN_OFFLINE == False:
         from kaggle.competitions import nflrush
