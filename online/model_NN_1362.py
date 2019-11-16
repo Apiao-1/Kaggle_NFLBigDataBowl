@@ -11,11 +11,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 
-from keras.layers import Dense,Input,Flatten,concatenate,Dropout,Lambda,BatchNormalization
-from keras.models import Model
-import keras.backend as K
-from keras.callbacks import Callback
-from  keras.callbacks import EarlyStopping,ModelCheckpoint
+from keras.layers import BatchNormalization
 import datetime
 import time
 import warnings
@@ -445,67 +441,67 @@ def predict(x_te):
 
 TRAIN_OFFLINE = False
 
-# if __name__ == '__main__':
-if TRAIN_OFFLINE:
-    train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
-else:
-    train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+if __name__ == '__main__':
+    if TRAIN_OFFLINE:
+        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
+    else:
+        train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
 
-outcomes = train[['GameId','PlayId','Yards']].drop_duplicates()
+    outcomes = train[['GameId','PlayId','Yards']].drop_duplicates()
 
-train_basetable = create_features(train, False)
+    train_basetable = create_features(train, False)
 
-X = train_basetable.copy()
-yards = X.Yards
+    X = train_basetable.copy()
+    yards = X.Yards
 
-y = np.zeros((yards.shape[0], 199))
-for idx, target in enumerate(list(yards)):
-    y[idx][99 + target] = 1
+    y = np.zeros((yards.shape[0], 199))
+    for idx, target in enumerate(list(yards)):
+        y[idx][99 + target] = 1
 
-X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
+    X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
-scaler = StandardScaler()
-X = scaler.fit_transform(X)
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
 
-X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=12345)
-print(X_train.shape, X_val.shape)
-print(y_train.shape, y_val.shape)
+    # X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=12345)
+    # print(X_train.shape, X_val.shape)
+    # print(y_train.shape, y_val.shape)
 
-losses = []
-models = []
-crps_csv = []
+    losses = []
+    models = []
+    crps_csv = []
 
-s_time = time.time()
+    s_time = time.time()
 
-for k in range(2):
-    kfold = KFold(5, random_state=42 + k, shuffle=True)
-    for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(yards)):
-        print("-----------")
-        print("-----------")
-        tr_x, tr_y = X[tr_inds], y[tr_inds]
-        val_x, val_y = X[val_inds], y[val_inds]
-        model, crps = get_model(tr_x, tr_y, val_x, val_y)
-        models.append(model)
-        print("the %d fold crps is %f" % ((k_fold + 1), crps))
-        crps_csv.append(crps)
+    for k in range(2):
+        kfold = KFold(5, random_state=42 + k, shuffle=True)
+        for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(yards)):
+            print("-----------")
+            print("-----------")
+            tr_x, tr_y = X[tr_inds], y[tr_inds]
+            val_x, val_y = X[val_inds], y[val_inds]
+            model, crps = get_model(tr_x, tr_y, val_x, val_y)
+            models.append(model)
+            print("the %d fold crps is %f" % ((k_fold + 1), crps))
+            crps_csv.append(crps)
 
-print("mean crps is %f" % np.mean(crps_csv))
+    print("mean crps is %f" % np.mean(crps_csv))
 
-if TRAIN_OFFLINE == False:
-    from kaggle.competitions import nflrush
+    if TRAIN_OFFLINE == False:
+        from kaggle.competitions import nflrush
 
-    env = nflrush.make_env()
-    iter_test = env.iter_test()
+        env = nflrush.make_env()
+        iter_test = env.iter_test()
 
-    for (test_df, sample_prediction_df) in iter_test:
-        basetable = create_features(test_df, deploy=True)
-        basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-        scaled_basetable = scaler.transform(basetable)
+        for (test_df, sample_prediction_df) in iter_test:
+            basetable = create_features(test_df, deploy=True)
+            basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+            scaled_basetable = scaler.transform(basetable)
 
-        y_pred = predict(scaled_basetable)
-        y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+            y_pred = predict(scaled_basetable)
+            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
 
-        preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
-        env.predict(preds_df)
+            preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+            env.predict(preds_df)
 
-    env.write_submission_file()
+        env.write_submission_file()
