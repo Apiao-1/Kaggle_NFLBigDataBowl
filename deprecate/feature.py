@@ -1,24 +1,17 @@
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import matplotlib as mpl
 import seaborn as sns
 import datetime
 # from kaggle.competitions import nflrush
-import tqdm
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.model_selection import train_test_split, KFold
-import keras
 
 from tqdm import tqdm_notebook
 import warnings
 import os
 
-from NFLBigDataBowl import model_NN
 from NFLBigDataBowl import model
-from sklearn.model_selection import train_test_split, KFold
-from NFLBigDataBowl import logger
+from NFLBigDataBowl.deprecate import logger
 
 log = ''
 

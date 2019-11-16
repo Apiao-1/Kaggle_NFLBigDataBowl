@@ -25,8 +25,11 @@
 https://www.kaggle.com/apiao1/nfl-001-lightgbm?scriptVersionId=23335929
 V5 cv:0.50477(指标算错了) lb:.1386
 
-加maxDepth,https://www.kaggle.com/apiao1/nfl-001-lightgbm?scriptVersionId=23338069
+加maxDepth,https://www.kaggle.com/apiao1/model-lgbm?scriptVersionId=23338069
 V7 cv:0.013051045682717676 lb:.1376
+
+https://www.kaggle.com/apiao1/model-lgbm?scriptVersionId=23465307
+V22 cv:0.013031424252303903 lb:.1374
 
 2. 用LGBMRegressor,得到预测值后加函数展开， https://www.kaggle.com/newbielch/lgbm-regression-view
 https://www.kaggle.com/apiao1/model-lgbm-regression/notebook?scriptVersionId=23357454
