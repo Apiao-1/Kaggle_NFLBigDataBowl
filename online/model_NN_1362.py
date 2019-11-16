@@ -300,8 +300,8 @@ def create_features(df, deploy=False):
 
         ## Orientation and Dir
         # df["Orientation_ob"] = df["Orientation"].apply(lambda x: orientation_to_cat(x)).astype("object")
-        # df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
-        # add_new_feas.append("Dir_ob")
+        df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
+        add_new_feas.append("Dir_ob")
         # add_new_feas.append("Orientation_ob")
 
 
@@ -309,10 +309,10 @@ def create_features(df, deploy=False):
         df["Orientation_cos"] = df["Orientation"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
         df["Dir_sin"] = df["Dir"].apply(lambda x: np.sin(x / 360 * 2 * np.pi))
         df["Dir_cos"] = df["Dir"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
-        # df['S_horizontal'] = df['S'] * df['Dir_cos']
-        # df['S_vertical'] = df['S'] * df['Dir_sin']
-        # add_new_feas.append("S_vertical")
-        # add_new_feas.append("S_horizontal")
+        df['S_horizontal'] = df['S'] * df['Dir_cos']
+        df['S_vertical'] = df['S'] * df['Dir_sin']
+        add_new_feas.append("S_vertical")
+        add_new_feas.append("S_horizontal")
         add_new_feas.append("Orientation_cos")
         add_new_feas.append("Orientation_sin")
         add_new_feas.append("Dir_sin")
@@ -402,7 +402,7 @@ class CRPSCallback(Callback):
             y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
             y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
             val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * X_valid.shape[0])
-            val_s = np.round(val_s, 6)
+            # val_s = np.round(val_s, 6)
             logs['CRPS_score_val'] = val_s
 
 
@@ -452,9 +452,9 @@ def get_model(x_tr, y_tr, x_val, y_val):
     y_pred = model.predict(x_val)
     y_true = y_val
     val_s = metric_crps(y_true, y_pred)
-    crps_round = np.round(val_s, 7)
+    # crps_round = np.round(val_s, 7)
 
-    return model, crps_round
+    return model, val_s
 
 
 def predict(x_te):
