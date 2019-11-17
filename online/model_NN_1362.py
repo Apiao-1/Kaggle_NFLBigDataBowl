@@ -144,6 +144,14 @@ def create_features(df, deploy=False):
         else:
             return angle
 
+    # https://www.kaggle.com/apiao1/model-nn/notebook?scriptVersionId=23555246
+    # def new_orientation(angle, play_direction):
+    #     if play_direction == 'left':
+    #         new_angle = (270.0 - angle) % 360
+    #         return new_angle
+    #     else:
+    #         return (90 - angle) % 360
+
     def euclidean_distance(x1, y1, x2, y2):
         x_diff = (x1 - x2) ** 2
         y_diff = (y1 - y2) ** 2
@@ -336,6 +344,32 @@ def create_features(df, deploy=False):
         #             train["HomeScoreBeforePlay"] > train["VisitorScoreBeforePlay"])
         # add_new_feas.append("diffScoreBeforePlay_binary_ob")
 
+        # play是否发生在控球方所在的半场
+        # df['own_field'] = (df['FieldPosition'].fillna('') == df['PossessionTeam']).astype(int)
+        # add_new_feas.append("own_field")
+
+        # df.loc[df.VisitorTeamAbbr == "ARI", 'VisitorTeamAbbr'] = "ARZ"
+        # df.loc[df.HomeTeamAbbr == "ARI", 'HomeTeamAbbr'] = "ARZ"
+        #
+        # df.loc[df.VisitorTeamAbbr == "BAL", 'VisitorTeamAbbr'] = "BLT"
+        # df.loc[df.HomeTeamAbbr == "BAL", 'HomeTeamAbbr'] = "BLT"
+        #
+        # df.loc[df.VisitorTeamAbbr == "CLE", 'VisitorTeamAbbr'] = "CLV"
+        # df.loc[df.HomeTeamAbbr == "CLE", 'HomeTeamAbbr'] = "CLV"
+        #
+        # df.loc[df.VisitorTeamAbbr == "HOU", 'VisitorTeamAbbr'] = "HST"
+        # df.loc[df.HomeTeamAbbr == "HOU", 'HomeTeamAbbr'] = "HST"
+        # 主队持球或是客队持球
+        # df['process_type'] = (df['PossessionTeam'] == df['HomeTeamAbbr']).astype(int)
+        # add_new_feas.append("process_type")
+        # 是否为防守方
+        # df['TeamOnOffense'] = "home"
+        # df.loc[df.PossessionTeam != df.HomeTeamAbbr, 'TeamOnOffense'] = "away"
+        # df['IsOnOffense'] = df.Team == df.TeamOnOffense
+        # add_new_feas.append("IsOnOffense")
+        # df['Team'] = df['Team'].apply(lambda x: x.strip() == 'home')
+        # add_new_feas.append("Team")
+
         static_features = df[df['NflId'] == df['NflIdRusher']][
             add_new_feas + ['GameId', 'PlayId', 'X', 'Y', 'S', 'A', 'Dis', 'Orientation', 'Dir',
                             'YardLine', 'Quarter', 'Down', 'Distance', 'DefendersInTheBox']].drop_duplicates()
@@ -346,19 +380,117 @@ def create_features(df, deploy=False):
 
         return static_features
 
-    def combine_features(relative_to_back, defense, static, deploy=deploy):
+    def combine_features(relative_to_back, defense, static, personnel=None, deploy=deploy):
         df = pd.merge(relative_to_back, defense, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, static, on=['GameId', 'PlayId'], how='inner')
+        # df = pd.merge(df, personnel, on=['GameId', 'PlayId'], how='inner')
 
         if not deploy:
             df = pd.merge(df, outcomes, on=['GameId', 'PlayId'], how='inner')
 
         return df
 
-    def after_process(train):
-        # 离发球线距离x
-        # train['dist_yardline'] = train['YardLine'] - train['X'] / 0.91
-        return train
+    def personnel_features(df):
+        personnel = df[['GameId', 'PlayId', 'OffensePersonnel', 'DefensePersonnel']].drop_duplicates()
+        personnel['DefensePersonnel'] = personnel['DefensePersonnel'].apply(lambda x: split_personnel(x))
+        personnel['DefensePersonnel'] = personnel['DefensePersonnel'].apply(lambda x: defense_formation(x))
+        personnel['num_DL'] = personnel['DefensePersonnel'].apply(lambda x: x[0])
+        personnel['num_LB'] = personnel['DefensePersonnel'].apply(lambda x: x[1])
+        personnel['num_DB'] = personnel['DefensePersonnel'].apply(lambda x: x[2])
+
+        personnel['OffensePersonnel'] = personnel['OffensePersonnel'].apply(lambda x: split_personnel(x))
+        personnel['OffensePersonnel'] = personnel['OffensePersonnel'].apply(lambda x: offense_formation(x))
+        personnel['num_QB'] = personnel['OffensePersonnel'].apply(lambda x: x[0])
+        personnel['num_RB'] = personnel['OffensePersonnel'].apply(lambda x: x[1])
+        personnel['num_WR'] = personnel['OffensePersonnel'].apply(lambda x: x[2])
+        personnel['num_TE'] = personnel['OffensePersonnel'].apply(lambda x: x[3])
+        personnel['num_OL'] = personnel['OffensePersonnel'].apply(lambda x: x[4])
+
+        # Let's create some features to specify if the OL is covered
+        personnel['OL_diff'] = personnel['num_OL'] - personnel['num_DL']
+        personnel['OL_TE_diff'] = (personnel['num_OL'] + personnel['num_TE']) - personnel['num_DL']
+        # Let's create a feature to specify if the defense is preventing the run
+        # Let's just assume 7 or more DL and LB is run prevention
+        personnel['run_def'] = (personnel['num_DL'] + personnel['num_LB'] > 6).astype(int)
+
+        personnel.drop(['OffensePersonnel', 'DefensePersonnel'], axis=1, inplace=True)
+
+        return personnel
+
+    def split_personnel(s):
+        splits = s.split(',')
+        for i in range(len(splits)):
+            splits[i] = splits[i].strip()
+
+        return splits
+
+    def defense_formation(l):
+        dl = 0
+        lb = 0
+        db = 0
+        other = 0
+
+        for position in l:
+            sub_string = position.split(' ')
+            if sub_string[1] == 'DL':
+                dl += int(sub_string[0])
+            elif sub_string[1] in ['LB', 'OL']:
+                lb += int(sub_string[0])
+            else:
+                db += int(sub_string[0])
+
+        counts = (dl, lb, db, other)
+
+        return counts
+
+    def offense_formation(l):
+        qb = 0
+        rb = 0
+        wr = 0
+        te = 0
+        ol = 0
+
+        sub_total = 0
+        qb_listed = False
+        for position in l:
+            sub_string = position.split(' ')
+            pos = sub_string[1]
+            cnt = int(sub_string[0])
+
+            if pos == 'QB':
+                qb += cnt
+                sub_total += cnt
+                qb_listed = True
+            # Assuming LB is a line backer lined up as full back
+            elif pos in ['RB', 'LB']:
+                rb += cnt
+                sub_total += cnt
+            # Assuming DB is a defensive back and lined up as WR
+            elif pos in ['WR', 'DB']:
+                wr += cnt
+                sub_total += cnt
+            elif pos == 'TE':
+                te += cnt
+                sub_total += cnt
+            # Assuming DL is a defensive lineman lined up as an additional line man
+            else:
+                ol += cnt
+                sub_total += cnt
+
+        # If not all 11 players were noted at given positions we need to make some assumptions
+        # I will assume if a QB is not listed then there was 1 QB on the play
+        # If a QB is listed then I'm going to assume the rest of the positions are at OL
+        # This might be flawed but it looks like RB, TE and WR are always listed in the personnel
+        if sub_total < 11:
+            diff = 11 - sub_total
+            if not qb_listed:
+                qb += 1
+                diff -= 1
+            ol += diff
+
+        counts = (qb, rb, wr, te, ol)
+
+        return counts
 
     yardline = update_yardline(df)
     df = update_orientation(df, yardline)
@@ -366,8 +498,8 @@ def create_features(df, deploy=False):
     rel_back = features_relative_to_back(df, back_feats)
     def_feats = defense_features(df)
     static_feats = static_features(df)
+    # personnel = personnel_features(df)
     basetable = combine_features(rel_back, def_feats, static_feats, deploy=deploy)
-    basetable = after_process(basetable)
 
     return basetable
 
