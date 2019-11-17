@@ -131,9 +131,11 @@ def create_features(df, deploy=False):
         if rush_team == field_position:
             # offense starting at X = 0 plus the 10 yard endzone plus the line of scrimmage
             return 10.0 + yardline
+            # return yardline
         else:
             # half the field plus the yards between midfield and the line of scrimmage
             return 60.0 + (50 - yardline)
+            # return 100 - yardline
 
     def new_orientation(angle, play_direction):
         if play_direction == 'left':
@@ -151,6 +153,14 @@ def create_features(df, deploy=False):
     #         return new_angle
     #     else:
     #         return (90 - angle) % 360
+
+    # https: // www.kaggle.com / peterhurford / something - is -the - matter -with-orientation
+    # def new_orientation(angle, play_direction):
+    #     if play_direction == 'left':
+    #         new_angle = (180.0 + angle) % 360
+    #         return new_angle
+    #     else:
+    #         return angle
 
     def euclidean_distance(x1, y1, x2, y2):
         x_diff = (x1 - x2) ** 2
@@ -206,13 +216,34 @@ def create_features(df, deploy=False):
 
         player_distance = player_distance.groupby(
             ['GameId', 'PlayId', 'back_from_scrimmage', 'back_oriented_down_field', 'back_moving_down_field']) \
-            .agg({'dist_to_back': ['min', 'max', 'mean', 'std']}) \
+            .agg({'dist_to_back': ['min', 'max', 'mean', 'std'],
+                  'X': ['mean', 'std'],
+                  # 'Y': ['mean', 'std'],
+                  # 'Y': ['max', 'min'],
+                  }) \
             .reset_index()
         player_distance.columns = ['GameId', 'PlayId', 'back_from_scrimmage', 'back_oriented_down_field',
                                    'back_moving_down_field',
-                                   'min_dist', 'max_dist', 'mean_dist', 'std_dist']
-
+                                   'min_dist', 'max_dist', 'mean_dist', 'std_dist',
+                                   'X_mean','X_std',
+                                   # 'Y_mean', 'Y_std',
+                                   ]
         return player_distance
+
+    def other(df, carriers):
+        player_distance = df[['GameId', 'PlayId', 'NflId', 'X', 'Y', 'Position']]
+        player_distance = pd.merge(player_distance, carriers, on=['GameId', 'PlayId'], how='inner')
+        player_distance = player_distance[player_distance['NflId'] != player_distance['NflIdRusher']]
+        player_distance['dist_to_back'] = player_distance[['X', 'Y', 'back_X', 'back_Y']].apply(
+            lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
+
+        # Rusher距QB的距离，训练集23171 中有23290个QB，待确认缺失数据的处理
+        QB_distance = player_distance[player_distance['Position'] == 'QB'][['dist_to_back', 'GameId', 'PlayId']].rename(
+            columns={'dist_to_back': 'dist_QB'})
+        player_distance = pd.merge(player_distance, QB_distance, on=['GameId', 'PlayId'], how='inner')
+        print(player_distance.head())
+
+        return player_distance[['GameId', 'PlayId', 'dist_QB']]
 
     def defense_features(df):
         rusher = df[df['NflId'] == df['NflIdRusher']][['GameId', 'PlayId', 'Team', 'X', 'Y']]
@@ -225,9 +256,32 @@ def create_features(df, deploy=False):
             lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
 
         defense = defense.groupby(['GameId', 'PlayId']) \
-            .agg({'def_dist_to_back': ['min', 'max', 'mean', 'std']}) \
+            .agg({'def_dist_to_back': ['min', 'mean', 'std'],
+                  'X': ['mean', 'std'],
+                  # 'Y': ['mean', 'std'],
+                  }) \
             .reset_index()
-        defense.columns = ['GameId', 'PlayId', 'def_min_dist', 'def_max_dist', 'def_mean_dist', 'def_std_dist']
+        defense.columns = ['GameId', 'PlayId', 'def_min_dist', 'def_mean_dist', 'def_std_dist',
+                           'X_mean','X_std',
+                           # 'Y_mean', 'Y_std',
+                           ]
+
+        return defense
+
+    def offense_features(df):
+        rusher = df[df['NflId'] == df['NflIdRusher']][['GameId', 'PlayId', 'Team', 'X', 'Y']]
+        rusher.columns = ['GameId', 'PlayId', 'RusherTeam', 'RusherX', 'RusherY']
+
+        defense = pd.merge(df, rusher, on=['GameId', 'PlayId'], how='inner')
+        defense = defense[defense['Team'] == defense['RusherTeam']][
+            ['GameId', 'PlayId', 'X', 'Y', 'RusherX', 'RusherY']]
+        defense['of_dist_to_back'] = defense[['X', 'Y', 'RusherX', 'RusherY']].apply(
+            lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
+
+        defense = defense.groupby(['GameId', 'PlayId']) \
+            .agg({'of_dist_to_back': ['min', 'max', 'mean', 'std']}) \
+            .reset_index()
+        defense.columns = ['GameId', 'PlayId', 'of_min_dist', 'of_max_dist', 'of_mean_dist', 'of_std_dist']
 
         return defense
 
@@ -380,10 +434,10 @@ def create_features(df, deploy=False):
 
         return static_features
 
-    def combine_features(relative_to_back, defense, static, personnel=None, deploy=deploy):
+    def combine_features(relative_to_back, defense, static, other=None, deploy=deploy):
         df = pd.merge(relative_to_back, defense, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, static, on=['GameId', 'PlayId'], how='inner')
-        # df = pd.merge(df, personnel, on=['GameId', 'PlayId'], how='inner')
+        # df = pd.merge(df, other, on=['GameId', 'PlayId'], how='inner')
 
         if not deploy:
             df = pd.merge(df, outcomes, on=['GameId', 'PlayId'], how='inner')
@@ -496,10 +550,14 @@ def create_features(df, deploy=False):
     df = update_orientation(df, yardline)
     back_feats = back_features(df)
     rel_back = features_relative_to_back(df, back_feats)
+    # other = other(df, back_feats)
     def_feats = defense_features(df)
+    # of_feats = offense_features(df)
     static_feats = static_features(df)
     # personnel = personnel_features(df)
     basetable = combine_features(rel_back, def_feats, static_feats, deploy=deploy)
+
+
 
     return basetable
 
@@ -540,6 +598,10 @@ class CRPSCallback(Callback):
 
 def get_model(x_tr, y_tr, x_val, y_val):
     inp = Input(shape=(x_tr.shape[1],))
+    # x = Dense(2048, input_dim=X.shape[1], activation='relu')(inp)
+    # x = Dropout(0.5)(x)
+    # x = BatchNormalization()(x)
+    # x = Dense(1024, activation='relu')(x)
     x = Dense(1024, input_dim=X.shape[1], activation='relu')(inp)
     x = Dropout(0.5)(x)
     x = BatchNormalization()(x)
@@ -605,7 +667,7 @@ TRAIN_OFFLINE = False
 
 if __name__ == '__main__':
     if TRAIN_OFFLINE:
-        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
+        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:2200]
     else:
         train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
 
