@@ -3,25 +3,20 @@
 
 import datetime
 import os
-import time
-from concurrent.futures import ProcessPoolExecutor
-from math import ceil
-from matplotlib import pyplot
 
 from catboost import CatBoostClassifier
-from lightgbm import LGBMRegressor,LGBMClassifier
+from lightgbm import LGBMRegressor
 from sklearn.ensemble import GradientBoostingClassifier,GradientBoostingRegressor, RandomForestClassifier, ExtraTreesClassifier,RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold, KFold, cross_val_score
+from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold, cross_val_score
 from sklearn.metrics import mean_squared_error,mean_absolute_error
-import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from xgboost.sklearn import XGBClassifier
 # from NFLBigDataBowl import feature
-from NFLBigDataBowl.online import model_NN_1363
-from NFLBigDataBowl import logger
+from NFLBigDataBowl.online import model_NN_1362
+from NFLBigDataBowl.deprecate import logger
 
 cpu_jobs = os.cpu_count() - 1
 log = logger.get_logger()
@@ -74,7 +69,7 @@ def get_train_data():
     else:
         train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
         outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
-        train = model_NN_1363.create_features(train, False)
+        train = model_NN_1362.create_features(train, False)
         train.to_csv(path, index=False)
     return train
 
@@ -98,15 +93,19 @@ def grid_search(estimator, param_grid):
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
-    print(X_train.shape, y_train.shape)
-    print(X_val.shape, y_val.shape)
     # data = feature.get_train_tree_data()
 
     estimator_name = estimator.__class__.__name__
     n_jobs = cpu_jobs
-    # if estimator_name is 'XGBClassifier' or estimator_name is 'LGBMClassifier' or estimator_name is 'CatBoostClassifier':
-    #     n_jobs = 1
+    if estimator_name is 'XGBClassifier' or estimator_name is 'LGBMClassifier':
+        n_jobs = 1
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
+    else:
+        X_train = X
+        y_train = y
+
+    print(X_train.shape, y_train.shape)
+    print(X_val.shape, y_val.shape)
 
     # clf = GridSearchCV(estimator=estimator, param_grid=param_grid, n_jobs=n_jobs, cv=5)
     # clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring='neg_mean_absolute_error', n_jobs=n_jobs,cv=5)
@@ -386,15 +385,11 @@ def grid_search_cat(get_param=False):
 def grid_search_rf(criterion='gini', get_param=False):
     if criterion == 'gini':
         params = {
-            # 10
-            # 'n_estimators': 250,
-            # 'max_depth': 4,
-            # 'min_samples_split': 3,
-            # 'min_samples_leaf': 7,
             'n_estimators': 450,
             'min_samples_split': 5,
             'min_samples_leaf': 13,
-            'max_features':0.5,
+            'max_features':0.4,
+            'max_depth':10,
 
             'bootstrap': False,
             # 'verbose':1,
@@ -417,10 +412,10 @@ def grid_search_rf(criterion='gini', get_param=False):
         return params
 
     steps = {
-        # 'n_estimators': {'step': 50, 'min': 1, 'max': 'inf'},
-        # 'max_depth': {'step': 1, 'min': 1, 'max': 'inf'},
-        # 'min_samples_split': {'step': 2, 'min': 2, 'max': 'inf'},
-        # 'min_samples_leaf': {'step': 2, 'min': 1, 'max': 'inf'},
+        'n_estimators': {'step': 50, 'min': 1, 'max': 'inf'},
+        'max_depth': {'step': 1, 'min': 1, 'max': 'inf'},
+        'min_samples_split': {'step': 2, 'min': 2, 'max': 'inf'},
+        'min_samples_leaf': {'step': 2, 'min': 1, 'max': 'inf'},
         'max_features': {'step': 0.1, 'min': 0.1, 'max': 1},
     }
 

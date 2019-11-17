@@ -2,13 +2,14 @@
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
 import numpy as np
-import lightgbm as lgb
+import xgboost as xgb
+from xgboost import XGBClassifier
 import pandas as pd
 from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import StandardScaler
 import datetime
 import warnings
-import os,re
+import os
 
 warnings.filterwarnings("ignore")
 
@@ -22,16 +23,13 @@ def metric_crps(y_true, y_pred):
     return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
 
 
-def early_metric_crps(y_true, y_pred):
-    print(y_pred.shape, y_true.shape)
-    y = np.zeros((y_true.shape[0], 199))
-    for idx, target in enumerate(list(y_true)):
-        y[idx][99 + target] = 1
-    y_true = np.clip(np.cumsum(y, axis=1), 0, 1)
+def early_metric_crps(model, X_test, y_test):
+    y_true = np.clip(np.cumsum(y_test, axis=1), 0, 1)
+    y_pred = model.predict(X_test)
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
     crps = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
     # print(crps)
-    return "CRPS", crps
+    return crps  # 要求是浮点数，并且分数越高越好（因此加了负号）
 
 
 def strtoseconds(txt):
@@ -343,34 +341,6 @@ def create_features(df, deploy=False):
 
     return basetable
 
-best_score = 9999
-best_param = {}
-def find_best_param(X, y, params):
-    kf = KFold(n_splits=5, random_state=42)
-    score = []
-    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
-        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
-        y_true = y_val.copy()
-        y_train = np.argmax(y_train, axis=1)
-        y_val = np.argmax(y_val, axis=1)
-        trn_data = lgb.Dataset(X_train, label=y_train)
-        val_data = lgb.Dataset(X_val, label=y_val)
-        num_round = 1000
-        model = lgb.train(params, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=False,
-                          early_stopping_rounds=50)
-        y_pred = model.predict(X_val, num_iteration=model.best_iteration)
-        score_ = metric_crps(y_true, y_pred)
-        # print("%d folder with score %f" % (i, score_))
-        score.append(score_)
-    mean_score = np.mean(score)
-    print("mean_score:", mean_score)
-    global best_score,best_param
-    if mean_score < best_score:
-        best_score = mean_score
-        print("update best_score:", best_score)
-        print("best params:", params)
-        best_param = params
-
 
 TRAIN_OFFLINE = True
 
@@ -378,7 +348,7 @@ if __name__ == '__main__':
     path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
     if TRAIN_OFFLINE:
         if os.path.exists(path):
-            train_basetable = pd.read_csv(path)
+            train_basetable = pd.read_csv(path)[:22000]
         else:
             train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
             outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
@@ -399,40 +369,70 @@ if __name__ == '__main__':
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    params = {
-        # 'n_estimators': 500,
-        'learning_rate': 0.1,
+    models = []
+    kf = KFold(n_splits=5, random_state=42)
+    score = []
 
-        'num_leaves': 50,  # Original 50
-        'max_depth': 9,
+    # y = np.argmax(y, axis=1) # 这里还有步隐含的含义：即把负的标签通过取index变为正的了
 
-        'min_split_gain': 0,
-        'min_child_weight': 1e-3,
-        'min_child_samples': 30,
-        "boosting": "gbdt",
-        "feature_fraction": 0.8,  # 0.9
-        "bagging_freq": 1,
-        "bagging_fraction": 0.8, # 'subsample'
-        "bagging_seed": 42,
-        "lambda_l1": 0.01,
-        "lambda_l2": 0.01,
+    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+        print(f'Fold : {i}')
+        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+        y_true = y_val.copy()
 
-        'num_class': 199,  # 199 possible places
-        'objective': 'multiclass',
-        "metric": "multi_logloss",
-        "verbosity": -1,
-        "seed": 42,
-    }
+        y_train = np.argmax(y_train, axis=1)
+        y_val = np.argmax(y_val, axis=1)
+        print(X_train.shape, y_train.shape)  # (800, 199)
+        print(X_val.shape, y_val.shape)  # (800, 199)
+        # model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
+        #                               n_estimators=50, n_jobs=-1, random_state=42)
+        param = {
+            'learning_rate': 1e-1,
+            'n_estimators': 80,
+            'max_depth': 8,
+            'min_child_weight': 3,
+            'gamma': .2,
+            'subsample': .8,
+            'colsample_bytree': .8,
+            'scale_pos_weight': 1,
+            'reg_alpha': 0,
 
-    print("调参1：提高准确率")
-    for num_leaves in range(5, 100, 5):
-        for max_depth in range(3, 8, 1):
-            params['num_leaves'] = num_leaves
-            params['max_depth'] = max_depth
-            find_best_param(X, y, params)
-    print("final best param: ", best_param)
-    print("final best score: ", best_score)
+            'num_class': 199,  # 199 possible places
+            'objective': 'multi:softprob', # 多分类的问题
+            "metric": "multi_logloss",
+            "verbosity": 0,
 
+            "seed": 42,
+        }
 
+        num_round = 1000
+        # model = XGBClassifier().set_params(**param)
+        # model.fit(X_train, y_train, eval_set = [(X_train,y_train),(X_val, y_val)], early_stopping_rounds=60,eval_metric=early_metric_crps)
+        trn_data = xgb.DMatrix(X_train, label=y_train)
+        val_data = xgb.DMatrix(X_val, label=y_val)
+        model = xgb.train(param, trn_data, num_round, verbose_eval=100, early_stopping_rounds=60)
 
-
+        # y_pred = model.predict(X_val)
+        y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+        print(y_pred.shape)  # (200, 199)
+        score_ = metric_crps(y_true, y_pred)
+        print(score_)
+        score.append(score_)
+        models.append(model)
+    print(np.mean(score))
+    # from kaggle.competitions import nflrush
+    #
+    # env = nflrush.make_env()
+    # for (test_df, sample_prediction_df) in env.iter_test():
+    #     basetable = create_features(test_df, deploy=True)
+    #
+    #     basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+    #     scaled_basetable = scaler.transform(basetable)
+    #
+    #     y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
+    #     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+    #
+    #     preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+    #     env.predict(preds_df)
+    #
+    # env.write_submission_file()

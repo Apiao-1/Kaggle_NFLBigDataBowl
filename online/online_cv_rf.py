@@ -4,20 +4,12 @@ from sklearn.ensemble import RandomForestRegressor
 import numpy as np
 import lightgbm as lgb
 import pandas as pd
-from sklearn.model_selection import train_test_split, KFold
+from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold, KFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
 import datetime
 import warnings
 import os
-from keras.layers import Dense, Input, Flatten, concatenate, Dropout, Lambda
-from keras.models import Model
-from keras.layers import BatchNormalization
-import keras.backend as K
 import re
-
-from keras.utils import to_categorical
-from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
-from sklearn.metrics import f1_score
 
 warnings.filterwarnings("ignore")
 
@@ -31,16 +23,13 @@ def metric_crps(y_true, y_pred):
     return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
 
 
-def early_metric_crps(y_true, y_pred):
-    # print(y_pred.shape, y_true.shape)
-    y = np.zeros((y_true.shape[0], 199))
-    for idx, target in enumerate(list(y_true)):
-        y[idx][99 + target] = 1
-    y_true = np.clip(np.cumsum(y, axis=1), 0, 1)
+def early_metric_crps(model, X_test, y_test):
+    y_true = np.clip(np.cumsum(y_test, axis=1), 0, 1)
+    y_pred = model.predict(X_test)
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
     crps = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
     # print(crps)
-    return "CRPS", crps
+    return -crps  # 要求是浮点数，并且分数越高越好（因此加了负号）
 
 
 def strtoseconds(txt):
@@ -353,232 +342,120 @@ def create_features(df, deploy=False):
     return basetable
 
 
-class CRPSCallback(Callback):
+def grid_search_rf(criterion='gini', get_param=False):
+    params = {
+        'n_estimators': 450,
+        'min_samples_split': 5,
+        'min_samples_leaf': 13,
+        'max_features': 0.4,
+        'max_depth': 10,
 
-    def __init__(self, validation, predict_batch_size=20, include_on_batch=False):
-        super(CRPSCallback, self).__init__()
-        self.validation = validation
-        self.predict_batch_size = predict_batch_size
-        self.include_on_batch = include_on_batch
+        'bootstrap': False,
+        # 'verbose':1,
+        # 'criterion': 'gini',
+        'random_state': 42
+    }
 
-        # print('validation shape', len(self.validation))
+    if get_param:
+        return params
 
-    def on_batch_begin(self, batch, logs={}):
-        pass
+    steps = {
+        'n_estimators': {'step': 50, 'min': 1, 'max': 'inf'},
+        'max_depth': {'step': 1, 'min': 1, 'max': 'inf'},
+        'min_samples_split': {'step': 2, 'min': 2, 'max': 'inf'},
+        'min_samples_leaf': {'step': 2, 'min': 1, 'max': 'inf'},
+        'max_features': {'step': 0.1, 'min': 0.1, 'max': 1},
+    }
 
-    def on_train_begin(self, logs={}):
-        if not ('CRPS_score_val' in self.params['metrics']):
-            self.params['metrics'].append('CRPS_score_val')
-
-    def on_batch_end(self, batch, logs={}):
-        if (self.include_on_batch):
-            logs['CRPS_score_val'] = float('-inf')
-
-    def on_epoch_end(self, epoch, logs={}):
-        logs['CRPS_score_val'] = float('-inf')
-
-        if (self.validation):
-            X_valid, y_valid = self.validation[0], self.validation[1]
-            y_pred = self.model.predict(X_valid)
-            y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
-            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-            val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * X_valid.shape[0])
-            val_s = np.round(val_s, 6)
-            logs['CRPS_score_val'] = val_s
+    grid_search_auto(steps, params, RandomForestRegressor())
 
 
-def get_NN_model(x_tr, y_tr, x_val, y_val):
-    inp = Input(shape=(x_tr.shape[1],))
-    x = Dense(1024, input_dim=X.shape[1], activation='relu')(inp)
-    x = Dropout(0.5)(x)
-    x = BatchNormalization()(x)
-    x = Dense(512, activation='relu')(x)
-    x = Dropout(0.5)(x)
-    x = BatchNormalization()(x)
-    x = Dense(256, activation='relu')(x)
-    x = Dropout(0.5)(x)
-    x = BatchNormalization()(x)
+def grid_search_auto(steps, params, estimator):
+    global log
 
-    out = Dense(199, activation='softmax')(x)
-    model = Model(inp, out)
-    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=[])
-    # add lookahead
-    #     lookahead = Lookahead(k=5, alpha=0.5) # Initialize Lookahead
-    #     lookahead.inject(model) # add into model
+    old_params = params.copy()
 
-    es = EarlyStopping(monitor='CRPS_score_val',
-                       mode='min',
-                       restore_best_weights=True,
-                       verbose=0,
-                       patience=10)
+    print(params)
 
-    mc = ModelCheckpoint('best_model.h5', monitor='CRPS_score_val', mode='min',
-                         save_best_only=True, verbose=0, save_weights_only=True)
+    print('---------------new grid search for all params------------------')
+    # for循环调整各个参数达到局部最优
+    for name, step in steps.items():
+        score = -99999
 
-    bsz = 1024
-    steps = x_tr.shape[0] / bsz
+        start = params[name] - step['step']
+        if start <= step['min']:
+            start = step['min']
 
-    # for i in range(1):
-    #     model.fit(x_tr, y_tr, batch_size=32, verbose=False)
-    # for i in range(1):
-    #     model.fit(x_tr, y_tr, batch_size=64, verbose=False)
-    # for i in range(1):
-    #     model.fit(x_tr, y_tr, batch_size=128, verbose=False)
-    # for i in range(1):
-    #     model.fit(x_tr, y_tr, batch_size=256, verbose=False)
-    model.fit(x_tr, y_tr, callbacks=[CRPSCallback(validation=(x_val, y_val)), es, mc], epochs=100, batch_size=bsz,
-              verbose=0)
-    model.load_weights("best_model.h5")
+        stop = params[name] + step['step']
+        if step['max'] != 'inf' and stop >= step['max']:
+            stop = step['max']
+        # 调整单个参数达到局部最优
+        while 1:
 
-    y_pred = model.predict(x_val)
-    y_true = y_val
-    val_s = metric_crps(y_true, y_pred)
-    crps_round = np.round(val_s, 7)
+            if str(step['step']).count('.') == 1:
+                stop += step['step'] / 10
+            else:
+                stop += step['step']
 
-    return model, crps_round
+            param_grid = {
+                # 最开始这里会产生3个搜索的参数，begin +- step，但之后的轮次只会根据方向每次搜索一个参数
+                name: np.arange(start, stop, step['step']),
+            }
 
+            best_params, best_score = grid_search(estimator.set_params(**params), param_grid)
 
-def train_lgb(X, y, single=True):
-    lgb_models = []
-    scores = []
-    kf = KFold(n_splits=5, random_state=42)
-    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
-        # print(f'Fold : {i}')
-        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
-        y_true = y_val.copy()
+            # 找到最优参数或者当前的得分best_score已经低于上一轮的score时结束(这里的低于或高于看具体的评价函数)
+            if best_params[name] == params[name]:
+                print("got best params, round over:", estimator.__class__.__name__, params)
+                break
 
-        y_train = np.argmax(y_train, axis=1)
-        y_val = np.argmax(y_val, axis=1)
-        # print(X_train.shape, y_train.shape)  # (800, 199)
-        # print(X_val.shape, y_val.shape)  # (800, 199)
+            if score > best_score:
+                print("score > best_score, round over:", estimator.__class__.__name__, params)
+                break
 
-        param = {
-            # 'n_estimators': 500,
-            'learning_rate': 0.005,
+            # 当产生比当前结果更优的解时，则在此方向是继续寻找
+            direction = (best_params[name] - params[name]) // abs(best_params[name] - params[name])  # 决定了每次只能跑两个参数
+            start = stop = best_params[name] + step['step'] * direction  # 根据方向让下一轮每次搜索一个参数
 
-            'num_leaves': 8,  # Original 50
-            'max_depth': 3,
+            params[name] = best_params[name]
 
-            'min_data_in_leaf': 101,  # min_child_samples
-            'max_bin': 75,
-            'min_child_weight': 1,
+            if best_params[name] - step['step'] < step['min'] or (
+                    step['max'] != 'inf' and best_params[name] + step['step'] > step['max']):
+                print("reach params limit, round over.", estimator.__class__.__name__, params)
+                break
 
-            "feature_fraction": 0.8,  # 0.9 colsample_bytree
-            "bagging_freq": 1,
-            "bagging_fraction": 0.8,  # 'subsample'
-            "bagging_seed": 42,
+            if abs(best_score - score) < abs(.0001 * score):
+                print("abs(best_score - score) < abs(.0001 * score), round over:", best_score - score,
+                      estimator.__class__.__name__, params)
+                score = best_score
+                print("update best score, best score = :", score)
+                break
 
-            'min_split_gain': 0,
-            "lambda_l1": 0.01,
-            "lambda_l2": 0.01,
+            score = best_score
+            print("update best score, best score = :", score)
 
-            "boosting": "gbdt",
-            'num_class': 199,  # 199 possible places
-            'objective': 'multiclass',
-            "metric": "multi_logloss",
-            "verbosity": -1,
-            "seed": 42,
-        }
+            print("Next round search: ", estimator.__class__.__name__, params)
 
-        trn_data = lgb.Dataset(X_train, label=y_train)
-        val_data = lgb.Dataset(X_val, label=y_val)
-        num_round = 10000
-        model = lgb.train(param, trn_data, num_round, valid_sets=[trn_data, val_data],verbose_eval=False,
-                          early_stopping_rounds=60)
-        lgb_models.append(model)
-        y_pred = model.predict(X_val, num_iteration=model.best_iteration)
-        # print(y_pred.shape)  # (200, 199)
-        score_ = metric_crps(y_true, y_pred)
-        # print(score_)
-        scores.append(score_)
-        lgb_models.append(model)
-    print("lgb mean score:", np.mean(scores))
+    old_params = params
 
-    if single:
-        # min_index = 0
-        # min = scores[min_index]
-        # for i, s in scores:
-        #     if s < min:
-        #         min = s
-        #         min_index = i
-        # return lgb_models[min_index]
-        return lgb_models[0]
-    return lgb_models
+    print('grid search: %s\n%r\n' % (estimator.__class__.__name__, params))
 
-def train_rf(X, y, single=True):
-    rf_models = []
-    scores = []
-    kf = KFold(n_splits=5, random_state=42)
-    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
-        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
-        # print(X_train.shape, y_train.shape)  # (800, 199)
-        # print(X_val.shape, y_val.shape)
-        model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
-                                      n_estimators=250, n_jobs=-1, random_state=42)
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_val)
-        # print(y_pred.shape) # (200, 199)
-        score_ = metric_crps(y_val, y_pred)
-        # print(score_)
-        scores.append(score_)
-        rf_models.append(model)
-    print("rf mean score:", np.mean(scores))
+def grid_search(estimator, param_grid):
+    start = datetime.datetime.now()
 
-    if single:
-        # min_index = 0
-        # min = scores[min_index]
-        # for i, s in scores:
-        #     if s < min:
-        #         min = s
-        #         min_index = i
-        # return rf_models[min_index]
-        return rf_models[0]
-    return rf_models
+    print('-----------search single param begin-----------')
+    # print(start.strftime('%Y-%m-%d %H:%M:%S'))
+    print(param_grid)
+    print()
 
-def train_NN(X, y, single=True, seed = 42):
-    models = []
-    scores = []
-    kf = KFold(n_splits=5, random_state=seed)
-    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
-        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
-        # print(X_train.shape, y_train.shape)  # (800, 199)
-        # print(X_val.shape, y_val.shape)
-        model, crps = get_NN_model(X_train, y_train, X_val, y_val)
-        models.append(model)
-        scores.append(crps)
-    print("NN mean score:", np.mean(scores))
+    train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+    global outcomes
+    outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+    train_basetable = create_features(train, False)
 
-    if single:
-        # min_index = 0
-        # min = scores[min_index]
-        # for i, s in scores:
-        #     if s < min:
-        #         min = s
-        #         min_index = i
-        # return models[min_index]
-        return models[0]
-    return models
-
-
-TRAIN_OFFLINE = False
-
-if __name__ == '__main__':
-    path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
-    if TRAIN_OFFLINE:
-        if os.path.exists(path):
-            train_basetable = pd.read_csv(path)
-        else:
-            train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
-            outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
-            train_basetable = create_features(train, False)
-            train_basetable.to_csv(path, index=False)
-    else:
-        train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
-        outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
-        train_basetable = create_features(train, False)
-
-    X = train_basetable.copy()
+    X = train_basetable
     yards = X.Yards
+
     y = np.zeros((yards.shape[0], 199))
     for idx, target in enumerate(list(yards)):
         y[idx][99 + target] = 1
@@ -587,34 +464,53 @@ if __name__ == '__main__':
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    clfs = ['NN', 'rf', 'lgb']
-    models = []
-    for j, v in enumerate(clfs):
-        clf = eval('train_%s' % v)(X, y, False)
-        models.append(clf)
-    models.append(train_NN(X,y,False, seed=43))
-    # flatten
-    # models = sum(models, [])
-    # print(len(models))
+    # data = feature.get_train_tree_data()
 
-    for model_list in models:
-        y_pred = np.mean([model.predict(scaled_basetable) for model in model_list], axis=0)
+    estimator_name = estimator.__class__.__name__
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=42)
+    if estimator_name is not 'XGBClassifier' and estimator_name is not 'LGBMClassifier':
+        X_train = X
+        y_train = y
 
-    from kaggle.competitions import nflrush
+    print(X_train.shape, y_train.shape)
+    print(X_val.shape, y_val.shape)
 
-    env = nflrush.make_env()
-    for (test_df, sample_prediction_df) in env.iter_test():
-        basetable = create_features(test_df, deploy=True)
+    # clf = GridSearchCV(estimator=estimator, param_grid=param_grid, n_jobs=n_jobs, cv=5)
+    # clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring='neg_mean_absolute_error', n_jobs=n_jobs,cv=5)
+    clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring=early_metric_crps, cv=5)
 
-        basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-        scaled_basetable = scaler.transform(basetable)
+    clf = fit_eval_metric(clf, X_train, y_train, estimator_name, X_test=X_val, y_test=y_val)  # 拟合评估指标
 
-        y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
-        y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+    means = clf.cv_results_['mean_test_score']
+    stds = clf.cv_results_['std_test_score']
+    for mean, std, params in zip(means, stds, clf.cv_results_['params']):
+        print('%0.10f (+/-%0.05f) for %r' % (mean, std * 2, params))
+    print()
+    print('best params', clf.best_params_)
+    print('best score', clf.best_score_)
+    print('time: %s' % str((datetime.datetime.now() - start)).split('.')[0])
+    print('-----------search single param end-----------')
+    print()
 
-        preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
-        preds_df.iloc[:, :50] = 0
-        preds_df.iloc[:, -50:] = 1
-        env.predict(preds_df)
+    return clf.best_params_, clf.best_score_
 
-    env.write_submission_file()
+
+def fit_eval_metric(estimator, X, y, name=None, X_test=None, y_test=None):
+    if name is None:
+        name = estimator.__class__.__name__
+
+    if X_test is None:
+        estimator.fit(X, y)
+    else:
+        if name is 'XGBClassifier' or name is 'LGBMClassifier':
+            print("early stopping")
+            estimator.fit(X, y, eval_set=[(X, y), (X_test, y_test)], early_stopping_rounds=40,
+                          eval_metric=early_metric_crps)
+        else:
+            estimator.fit(X, y)
+
+    return estimator
+
+
+if __name__ == '__main__':
+    grid_search_rf()

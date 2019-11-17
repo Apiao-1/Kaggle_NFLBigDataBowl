@@ -400,13 +400,13 @@ if __name__ == '__main__':
     X = scaler.fit_transform(X)
     params = {
         # 'n_estimators': 500,
-        'learning_rate': 0.1,
+        'learning_rate': 0.01,
 
-        'num_leaves': 8,  # Original 50
-        'max_depth': 3,
+        'num_leaves': 28,  # Original 50
+        'max_depth': 5,
 
-        'min_data_in_leaf':101, # min_child_samples
-        'max_bin':75,
+        'min_data_in_leaf': 101,  # min_child_samples
+        'max_bin': 75,
         'min_child_weight': 7,
 
         "feature_fraction": 0.8,  # 0.9 colsample_bytree
@@ -414,9 +414,9 @@ if __name__ == '__main__':
         "bagging_fraction": 0.8,  # 'subsample'
         "bagging_seed": 42,
 
-        'min_split_gain': 0,
-        "lambda_l1": 0.01,
-        "lambda_l2": 0.01,
+        'min_split_gain': 0.0,
+        "lambda_l1": 0.8,
+        "lambda_l2": 0.6,
 
         "boosting": "gbdt",
         'num_class': 199,  # 199 possible places
@@ -435,8 +435,9 @@ if __name__ == '__main__':
     # params = best_param
 
     print("调参1：提高准确率")
-    for max_depth in range(3, 13, 1):
-        for num_leaves in range(2, pow(2, max_depth) + 1, 2):
+    for max_depth in range(3, 11, 1):
+        limit = max(pow(2, max_depth) + 1,100)
+        for num_leaves in range(2, limit, 2):
             params['num_leaves'] = num_leaves
             params['max_depth'] = max_depth
             find_best_param(X, y, params)

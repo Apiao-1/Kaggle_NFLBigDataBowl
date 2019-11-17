@@ -9,10 +9,20 @@ from sklearn.preprocessing import StandardScaler
 import datetime
 import warnings
 import os
+from keras.layers import Dense, Input, Flatten, concatenate, Dropout, Lambda
+from keras.models import Model
+from keras.layers import BatchNormalization
+import keras.backend as K
+import re
+
+from keras.utils import to_categorical
+from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.svm import SVR
 
 warnings.filterwarnings("ignore")
 
-pd.set_option('display.max_columns', 50)
+pd.set_option('display.max_columns', 250)
 pd.set_option('display.max_rows', 150)
 
 
@@ -21,8 +31,9 @@ def metric_crps(y_true, y_pred):
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
     return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
 
+
 def early_metric_crps(y_true, y_pred):
-    print(y_pred.shape, y_true.shape)
+    # print(y_pred.shape, y_true.shape)
     y = np.zeros((y_true.shape[0], 199))
     for idx, target in enumerate(list(y_true)):
         y[idx][99 + target] = 1
@@ -31,6 +42,7 @@ def early_metric_crps(y_true, y_pred):
     crps = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
     # print(crps)
     return "CRPS", crps
+
 
 def strtoseconds(txt):
     txt = txt.split(':')
@@ -341,102 +353,330 @@ def create_features(df, deploy=False):
 
     return basetable
 
+
+class CRPSCallback(Callback):
+
+    def __init__(self, validation, predict_batch_size=20, include_on_batch=False):
+        super(CRPSCallback, self).__init__()
+        self.validation = validation
+        self.predict_batch_size = predict_batch_size
+        self.include_on_batch = include_on_batch
+
+        # print('validation shape', len(self.validation))
+
+    def on_batch_begin(self, batch, logs={}):
+        pass
+
+    def on_train_begin(self, logs={}):
+        if not ('CRPS_score_val' in self.params['metrics']):
+            self.params['metrics'].append('CRPS_score_val')
+
+    def on_batch_end(self, batch, logs={}):
+        if (self.include_on_batch):
+            logs['CRPS_score_val'] = float('-inf')
+
+    def on_epoch_end(self, epoch, logs={}):
+        logs['CRPS_score_val'] = float('-inf')
+
+        if (self.validation):
+            X_valid, y_valid = self.validation[0], self.validation[1]
+            y_pred = self.model.predict(X_valid)
+            y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
+            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+            val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * X_valid.shape[0])
+            val_s = np.round(val_s, 6)
+            logs['CRPS_score_val'] = val_s
+
+
+def get_NN_model(x_tr, y_tr, x_val, y_val):
+    inp = Input(shape=(x_tr.shape[1],))
+    x = Dense(1024, input_dim=X.shape[1], activation='relu')(inp)
+    x = Dropout(0.5)(x)
+    x = BatchNormalization()(x)
+    x = Dense(512, activation='relu')(x)
+    x = Dropout(0.5)(x)
+    x = BatchNormalization()(x)
+    x = Dense(256, activation='relu')(x)
+    x = Dropout(0.5)(x)
+    x = BatchNormalization()(x)
+
+    out = Dense(199, activation='softmax')(x)
+    model = Model(inp, out)
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=[])
+    # add lookahead
+    #     lookahead = Lookahead(k=5, alpha=0.5) # Initialize Lookahead
+    #     lookahead.inject(model) # add into model
+
+    es = EarlyStopping(monitor='CRPS_score_val',
+                       mode='min',
+                       restore_best_weights=True,
+                       verbose=0,
+                       patience=10)
+
+    mc = ModelCheckpoint('best_model.h5', monitor='CRPS_score_val', mode='min',
+                         save_best_only=True, verbose=0, save_weights_only=True)
+
+    bsz = 1024
+    steps = x_tr.shape[0] / bsz
+
+    # for i in range(1):
+    #     model.fit(x_tr, y_tr, batch_size=32, verbose=False)
+    # for i in range(1):
+    #     model.fit(x_tr, y_tr, batch_size=64, verbose=False)
+    # for i in range(1):
+    #     model.fit(x_tr, y_tr, batch_size=128, verbose=False)
+    # for i in range(1):
+    #     model.fit(x_tr, y_tr, batch_size=256, verbose=False)
+    model.fit(x_tr, y_tr, callbacks=[CRPSCallback(validation=(x_val, y_val)), es, mc], epochs=100, batch_size=bsz,
+              verbose=0)
+    model.load_weights("best_model.h5")
+
+    return model
+
+
+def train_lgb(X, y, n_splits, single=False):
+    lgb_models = []
+    scores = []
+    predict_test = np.zeros((y.shape[0], y.shape[1]))
+    kf = KFold(n_splits=n_splits, random_state=42,  shuffle=True)
+    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+        # print(f'Fold : {i}')
+        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+        y_true = y_val.copy()
+
+        y_train = np.argmax(y_train, axis=1)
+        y_val = np.argmax(y_val, axis=1)
+        # print(X_train.shape, y_train.shape)  # (800, 199)
+        # print(X_val.shape, y_val.shape)  # (800, 199)
+
+        param = {
+            # 'n_estimators': 500,
+            'learning_rate': 0.01,
+
+            'num_leaves': 28,  # Original 50
+            'max_depth': 5,
+
+            'min_data_in_leaf': 101,  # min_child_samples
+            'max_bin': 75,
+            'min_child_weight': 7,
+
+            "feature_fraction": 0.8,  # 0.9 colsample_bytree
+            "bagging_freq": 1,
+            "bagging_fraction": 0.8,  # 'subsample'
+            "bagging_seed": 42,
+
+            'min_split_gain': 0.0,
+            "lambda_l1": 0.8,
+            "lambda_l2": 0.6,
+
+            "boosting": "gbdt",
+            'num_class': 199,  # 199 possible places
+            'objective': 'multiclass',
+            "metric": "multi_logloss",
+            "verbosity": -1,
+            "seed": 42,
+        }
+
+        trn_data = lgb.Dataset(X_train, label=y_train)
+        val_data = lgb.Dataset(X_val, label=y_val)
+        num_round = 10000
+        model = lgb.train(param, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=False,
+                          early_stopping_rounds=60)
+        y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+
+        predict_test[vdx] = y_pred
+        # print(y_pred.shape)  # (200, 199)
+        score_ = metric_crps(y_true, y_pred)
+        # print(score_)
+        scores.append(score_)
+        lgb_models.append(model)
+    print("lgb mean score:", np.mean(scores))
+    # predict_test = np.clip(np.cumsum(predict_test, axis=1), 0, 1)
+
+    if single:
+        # min_index = 0
+        # min = scores[min_index]
+        # for i, s in scores:
+        #     if s < min:
+        #         min = s
+        #         min_index = i
+        # return lgb_models[min_index]
+        return lgb_models[0]
+    return lgb_models, predict_test
+
+
+def train_rf(X, y, n_splits, single=False):
+    rf_models = []
+    scores = []
+    predict_test = np.zeros((y.shape[0], y.shape[1]))
+    kf = KFold(n_splits=n_splits, random_state=42,  shuffle=True)
+    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+        # print(X_train.shape, y_train.shape)  # (800, 199)
+        # print(X_val.shape, y_val.shape)
+        model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
+                                      n_estimators=250, n_jobs=-1, random_state=42)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_val)
+        predict_test[vdx] = y_pred
+        # print(y_pred.shape) # (200, 199)
+        score_ = metric_crps(y_val, y_pred)
+        # print(score_)
+        scores.append(score_)
+        rf_models.append(model)
+    print("rf mean score:", np.mean(scores))
+    # predict_test = np.clip(np.cumsum(predict_test, axis=1), 0, 1)
+    # print(predict_test.shape) # (2200, 199)
+    if single:
+        # min_index = 0
+        # min = scores[min_index]
+        # for i, s in scores:
+        #     if s < min:
+        #         min = s
+        #         min_index = i
+        # return rf_models[min_index]
+        return rf_models[0]
+    return rf_models, predict_test
+
+
+def train_NN(X, y, n_splits, single=False, seed=42):
+    models = []
+    scores = []
+    predict_test = np.zeros((y.shape[0], y.shape[1]))
+    kf = KFold(n_splits=n_splits, random_state=seed, shuffle=True)
+    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+        # print(X_train.shape, y_train.shape)  # (800, 199)
+        # print(X_val.shape, y_val.shape)
+        model = get_NN_model(X_train, y_train, X_val, y_val)
+        y_pred = model.predict(X_val)
+        predict_test[vdx] = y_pred
+        crps = metric_crps(y_val, y_pred)
+        # crps = np.round(val_s, 7)
+
+        models.append(model)
+        scores.append(crps)
+    print("NN mean score:", np.mean(scores))
+    # predict_test = np.clip(np.cumsum(predict_test, axis=1), 0, 1)
+
+    if single:
+        # min_index = 0
+        # min = scores[min_index]
+        # for i, s in scores:
+        #     if s < min:
+        #         min = s
+        #         min_index = i
+        # return models[min_index]
+        return models[0]
+    return models, predict_test
+
+
 TRAIN_OFFLINE = False
 
-# if __name__ == '__main__':
-path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
-if TRAIN_OFFLINE:
-    if os.path.exists(path):
-        train_basetable = pd.read_csv(path)
+if __name__ == '__main__':
+    path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
+    if TRAIN_OFFLINE:
+        if os.path.exists(path):
+            train_basetable = pd.read_csv(path)[:1000]
+        else:
+            train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
+            outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+            train_basetable = create_features(train, False)
+            train_basetable.to_csv(path, index=False)
     else:
-        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
+        train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
         outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
         train_basetable = create_features(train, False)
-        train_basetable.to_csv(path, index=False)
-else:
-    train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
-    outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
-    train_basetable = create_features(train, False)
 
-X = train_basetable.copy()
-yards = X.Yards
-y = np.zeros((yards.shape[0], 199))
-for idx, target in enumerate(list(yards)):
-    y[idx][99 + target] = 1
-X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
+    X = train_basetable.copy()
+    yards = X.Yards
+    y = np.zeros((yards.shape[0], 199))
+    for idx, target in enumerate(list(yards)):
+        y[idx][99 + target] = 1
+    X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
 
-scaler = StandardScaler()
-X = scaler.fit_transform(X)
+    models = []
+    all_test = []
+    clfs = ['rf', 'lgb', 'NN']
+    for j, v in enumerate(clfs):
+        clf, single = eval('train_%s' % v)(X, y, 5, False)
+        models.append(clf)
+        all_test.append(single)
+    print(len(all_test), len(all_test[0]))
+    print(len(models), len(models[0]))
 
-models = []
-kf = KFold(n_splits=5, random_state=42)
-score = []
+    print('blending')
+    clf_map = {}
 
-# y = np.argmax(y, axis=1) # 这里还有步隐含的含义：即把负的标签通过取index变为正的了
+    for idx, target in enumerate(list(yards)):
+        # y[idx][99 + target:] = 1
+        y[idx][99 + target] = 1
 
-for i, (tdx, vdx) in enumerate(kf.split(X, y)):
-    print(f'Fold : {i}')
-    X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
-    y_true = y_val.copy()
+    clf_beg = 50
+    clf_end = 150
+    for idx in range(clf_beg, clf_end):
+        single_flag = True
+        global single_train
+        for v in all_test:
+            if single_flag:
+                single_train = v[:, idx].reshape(-1, 1)
+                # print(single_train.shape)
+                single_flag = False
+            else:
+                single_train = np.concatenate((single_train, v[:, idx].reshape(-1, 1)), axis=1)
+                # print(single_train.shape)
+        # print(single_train.shape)
+        single_clf = SVR()
+        # single_clf = Ridge()
+        single_clf.fit(single_train, y[:, idx])
+        clf_map[idx] = single_clf
+        # print(clf_map)
 
-    y_train = np.argmax(y_train, axis=1)
-    y_val = np.argmax(y_val, axis=1)
-    print(X_train.shape, y_train.shape) # (800, 199)
-    print(X_val.shape, y_val.shape) # (800, 199)
-    # model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
-    #                               n_estimators=50, n_jobs=-1, random_state=42)
-    param = {'num_leaves': 50,  # Original 50
-             'min_data_in_leaf': 30,  # Original 30
-             'n_estimators': 500,
-             'objective': 'multiclass',
-             'num_class': 199,  # 199 possible places
-             'max_depth': 6,
-             'learning_rate': 0.01,
-             'min_split_gain': 0,
-             'min_child_weight': 1e-3,
-             'min_child_samples': 21,
-             'subsample': .8,
-             'colsample_bytree': .8,
-             # "boosting": "gbdt",
-             # "feature_fraction": 0.7,  # 0.9
-             # "bagging_freq": 1,
-             # "bagging_fraction": 0.9,
-             # "bagging_seed": 11,
-             "metric": "multi_logloss",
-             # "lambda_l1": 0.1,
-             "verbosity": -1,
+    # flatten
+    # models = sum(models, [])
+    # print(len(models))
 
-             "seed": 42,
-             }
+    from kaggle.competitions import nflrush
 
-    trn_data = lgb.Dataset(X_train, label=y_train)
-    val_data = lgb.Dataset(X_val, label=y_val)
-    num_round = 10000
-    # model.fit(X_train, y_train, eval_set = [(X_train,y_train),(X_val, y_val)], early_stopping_rounds=60)
-    model = lgb.train(param, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=100,
-                      early_stopping_rounds=60)
+    env = nflrush.make_env()
+    for (test_df, sample_prediction_df) in env.iter_test():
+        basetable = create_features(test_df, deploy=True)
 
-    # y_pred = model.predict(X_val)
-    y_pred = model.predict(X_val, num_iteration=model.best_iteration)
-    print(y_pred.shape) # (200, 199)
-    score_ = metric_crps(y_true, y_pred)
-    print(score_)
-    score.append(score_)
-    models.append(model)
-print(np.mean(score))
-from kaggle.competitions import nflrush
+        basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+        scaled_basetable = scaler.transform(basetable)
 
-env = nflrush.make_env()
-for (test_df, sample_prediction_df) in env.iter_test():
-    basetable = create_features(test_df, deploy=True)
+        y_conduct = []
+        for model_list in models:
+            y_pred = np.mean([model.predict(scaled_basetable) for model in model_list], axis=0)
+            # y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+            y_conduct.append(y_pred)
+            # if flag:
+            #     y_conduct = y_pred
+            #     flag = False
+            # else:
+            #     y_conduct = np.concatenate((y_conduct, y_pred))
 
-    basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-    scaled_basetable = scaler.transform(basetable)
+        #         print(len(y_conduct))
+        # y_pred = clf.predict_proba(y_conduct)
+        y_ans = np.zeros((1, 199))
 
-    y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
-    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
-
-    preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
-    env.predict(preds_df)
-
-env.write_submission_file()
+        for idx in range(clf_beg, clf_end):
+            single_flag = True
+            global single_test
+            for v in y_conduct:
+                if single_flag:
+                    single_test = v[:, idx].reshape(-1, 1)
+                    single_flag = False
+                else:
+                    single_test = np.concatenate((single_test, v[:, idx].reshape(-1, 1)), axis=1)
+            single_pred = clf_map[idx].predict(single_test)
+            y_ans[:, idx] = single_pred[0]
+        y_ans = np.clip(np.cumsum(y_ans, axis=1), 0, 1)
+        y_ans[clf_end:] = 1
+        preds_df = pd.DataFrame(data=y_ans, columns=sample_prediction_df.columns)
+        preds_df.iloc[:, :50] = 0
+        preds_df.iloc[:, -50:] = 1
+        env.predict(preds_df)
+    env.write_submission_file()

@@ -223,69 +223,31 @@ def preprocess(train):
     train.loc[train.HomeTeamAbbr == "HOU", 'HomeTeamAbbr'] = "HST"
 
     # ——————— play ———————
-    ## GameClock
-    train['GameClock_sec'] = train['GameClock'].apply(strtoseconds)
-    # train["GameClock_minute"] = train["GameClock"].apply(lambda x: x.split(":")[0])  # hour
-    train['time_end'] = train.apply(lambda x: transform_time_all(x.loc['GameClock'], x.loc['Quarter']), axis=1)
 
-    ## Time
-    train['TimeHandoff'] = train['TimeHandoff'].apply(lambda x: datetime.datetime.strptime(x, "%Y-%m-%dT%H:%M:%S.%fZ"))
-    train['TimeSnap'] = train['TimeSnap'].apply(lambda x: datetime.datetime.strptime(x, "%Y-%m-%dT%H:%M:%S.%fZ"))
-    train['TimeDelta'] = train.apply(lambda row: (row['TimeHandoff'] - row['TimeSnap']).total_seconds(), axis=1)
-    # train['date_game'] = train_single.GameId.map(lambda x: pd.to_datetime(str(x)[:8]))
-
-    ## play是否发生在控球方所在的半场
-    train['own_field'] = (train['FieldPosition'].fillna('') == train['PossessionTeam']).astype(int)
-    ## 主队持球或是客队持球
-    train['process_type'] = (train['PossessionTeam'] == train['HomeTeamAbbr']).astype(int)
 
     ## PlayDirection
-    train['ToLeft'] = train.PlayDirection == "left"
+    # train['ToLeft'] = train.PlayDirection == "left"
     # train['PlayDirection'] = train['PlayDirection'].apply(lambda x: x.strip() == 'right')
 
-    # 是否为防守方
-    train['TeamOnOffense'] = "home"
-    train.loc[train.PossessionTeam != train.HomeTeamAbbr, 'TeamOnOffense'] = "away"
-    train['IsOnOffense'] = train.Team == train.TeamOnOffense  # Is player on offense?
-
-    # 发球线离自家球门的实际码线距离
-    train['YardLine'] = train.apply(
-        lambda x: (x.loc['YardLine']) if x.loc['own_field'] == 1 else (100 - x.loc['YardLine']), axis=1)
-    # train['dist_to_end_train'] = train.apply(lambda x: (100 - x.loc['YardLine']) if x.loc['own_field'] == 1 else x.loc['YardLine'], axis=1)
-    # ? https://www.kaggle.com/bgmello/neural-networks-feature-engineering-for-the-win
-    # train['dist_to_end_train'] = train.apply(lambda row: row['dist_to_end_train'] if row['PlayDirection'] else 100 - row['dist_to_end_train'],axis=1)
-    # train.drop(train.index[(train['dist_to_end_train'] < train['Yards']) | (train['dist_to_end_train'] - 100 > train['Yards'])],inplace=True)
 
     # 统一进攻方向 https://www.kaggle.com/cpmpml/initial-wrangling-voronoi-areas-in-python
     # https://www.kaggle.com/cpmpml/initial-wrangling-voronoi-areas-in-python?scriptVersionId=22014032
     train['Dir_rad'] = np.mod(90 - train.Dir, 360) * math.pi / 180.0
     train['Ori_rad'] = np.mod(90 - train.Orientation, 360) * math.pi / 180.0
-    # train['X_std'] = train.X
-    train.loc[train.ToLeft, 'X'] = 120 - train.loc[train.ToLeft, 'X']
-    # train['Y_std'] = train.Y
-    train.loc[train.ToLeft, 'Y'] = 160 / 3 - train.loc[train.ToLeft, 'Y']
     train['Dir_std'] = train.Dir_rad
     train['Ori_std'] = train.Ori_rad
     train.loc[train.ToLeft, 'Dir_std'] = np.mod(np.pi + train.loc[train.ToLeft, 'Dir_rad'], 2 * np.pi)
     train.loc[train.ToLeft, 'Ori_std'] = np.mod(np.pi + train.loc[train.ToLeft, 'Ori_rad'], 2 * np.pi)
 
-    # 离发球线距离x
-    train['dist_yardline'] = train['YardLine'] - train['X'] / 0.91
-
     # 方向是否与进攻方向相同
-    train['is_Dir_back'] = train['Dir_rad'].apply(lambda x: 1 if (x > np.pi) else 0)
-    train['is_Ori_back'] = train['Ori_std'].apply(lambda x: 1 if (x > np.pi) else 0)
+    # train['is_Dir_back'] = train['Dir_rad'].apply(lambda x: 1 if (x > np.pi) else 0)
+    # train['is_Ori_back'] = train['Ori_std'].apply(lambda x: 1 if (x > np.pi) else 0)
     train['Dir_std'] = train['Dir_std'].apply(lambda x: np.mod(x, np.pi))
     train['Ori_std'] = train['Ori_std'].apply(lambda x: np.mod(x, np.pi))
 
-    # 分方向的速度
-    train["Dir_std_sin"] = train["Dir_std"].apply(lambda x: np.sin(x))
-    train["Dir_std_cos"] = train["Dir_std"].apply(lambda x: np.cos(x))
-    train['S_horizontal'] = train['S'] * train['Dir_std_cos']
-    train['S_vertical'] = train['S'] * train['Dir_std_sin']
 
     ## Rusher
-    train['IsRusher'] = (train['NflId'] == train['NflIdRusher'])
+    # train['IsRusher'] = (train['NflId'] == train['NflIdRusher'])
     # train['IsRusher_ob'] = (train['NflId'] == train['NflIdRusher']).astype("object")
     # temp = train[train["IsRusher"]][["Team", "PlayId"]].rename(columns={"Team": "RusherTeam"})
     # train = train.merge(temp, on="PlayId")
@@ -304,15 +266,6 @@ def preprocess(train):
     # train['time_to_rusher_Defend'] = train[train['IsOnOffense'] == False][['X', 'Y','Rusher_X', 'Rusher_Y', 'S', 'A',]].apply(
     #         lambda x: min_tackle_time(euclidean_distance(x[0], x[1], x[2], x[3]), x[4], x[5]), axis=1)
 
-    # Rusher距QB的距离，训练集23171 中有23290个QB，待确认缺失数据的处理
-    QB_distance = train[train['Position'] == 'QB'][['dist_to_rusher', 'GameId', 'PlayId']].rename(
-        columns={'dist_to_rusher': 'dist_QB'})
-    train = pd.merge(train, QB_distance, on=['GameId', 'PlayId'], how='left')
-    # print("0.3", train.shape)
-
-    # let's say now I want for that specific play to have as features the # of players within 3, 6, 9, 12, 15
-    # yards of distance from the runner. In that case, as I already have the distances from the runner to each of the 11 defense players, I will count how many of them are within each of these intervals, and return those.
-    # defense_x = train[train['IsOnOffense'] == False][['X','Rusher_X','GameId','PlayId']].apply
 
     # 每个play对应两条,敌方球员距离，友方球员距离
     Offense_player_distance = train[(train['IsOnOffense'] == True) & (train['dist_to_rusher'] > 0)].groupby(
@@ -344,28 +297,9 @@ def preprocess(train):
     train['rusher_A_closet'] = train['A'] / (train['closest_A'] + 0.001)
     train.drop(['closest_S', 'closest_A'], axis=1, inplace=True)
 
-    # 球员距发球线的距离
-    train['dist_to_yardline'] = train[['X', 'YardLine']].apply(lambda x: x[0] - x[1], axis=1)
-
-    train['Team'] = train['Team'].apply(lambda x: x.strip() == 'home')
-
-    ## diff Score
-    train["diffScoreBeforePlay"] = train["HomeScoreBeforePlay"] - train["VisitorScoreBeforePlay"]
-    # train["diffScoreBeforePlay_binary_ob"] = (train["HomeScoreBeforePlay"] > train["VisitorScoreBeforePlay"]).astype("object")
 
     # ——————— player ———————
-    ## Age
-    train['PlayerBirthDate'] = train['PlayerBirthDate'].apply(lambda x: datetime.datetime.strptime(x, "%m/%d/%Y"))
-    seconds_in_year = 60 * 60 * 24 * 365.25
-    train['PlayerAge'] = train.apply(
-        lambda row: (row['TimeHandoff'] - row['PlayerBirthDate']).total_seconds() / seconds_in_year, axis=1)
-    # train["PlayerAge_ob"] = train['PlayerAge'].astype(np.int).astype("object") # 是否要将其看成cat变量
 
-    ## Height
-    train['PlayerHeight'] = train['PlayerHeight'].apply(lambda x: 12 * int(x.split('-')[0]) + int(x.split('-')[1]))
-    train['PlayerBMI'] = 703 * (train['PlayerWeight'] / (train['PlayerHeight']) ** 2)
-    print(2)
-    print(train.shape)
     ## Orientation and Dir
     # train["Orientation_ob"] = train["Orientation"].apply(lambda x: orientation_to_cat(x)).astype("object")
     # train["Dir_ob"] = train["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
@@ -377,48 +311,6 @@ def preprocess(train):
     # train = pd.concat(
     #     [train.drop(['OffenseFormation'], axis=1), pd.get_dummies(train['OffenseFormation'], prefix='Formation')],
     #     axis=1)
-
-    # ——————— environment ———————
-
-    ## Weather
-    train['GameWeather_process'] = train['GameWeather'].str.lower()
-    train['GameWeather_process'] = train['GameWeather_process'].apply(
-        lambda x: "indoor" if not pd.isna(x) and "indoor" in x else x)
-    train['GameWeather_process'] = train['GameWeather_process'].apply(
-        lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party', 'partly') if not pd.isna(
-            x) else x)
-    train['GameWeather_process'] = train['GameWeather_process'].apply(
-        lambda x: x.replace('clear and sunny', 'sunny and clear') if not pd.isna(x) else x)
-    train['GameWeather_process'] = train['GameWeather_process'].apply(
-        lambda x: x.replace('skies', '').replace("mostly", "").strip() if not pd.isna(x) else x)
-    train['GameWeather_dense'] = train['GameWeather_process'].apply(map_weather)
-
-    ## WindSpeed
-    # print(train['WindSpeed'].value_counts())
-    # train['WindSpeed_ob'] = train['WindSpeed'].apply(
-    #     lambda x: x.lower().replace('mph', '').strip() if not pd.isna(x) else x)
-    # train['WindSpeed_ob'] = train['WindSpeed_ob'].apply(
-    #     lambda x: (int(x.split('-')[0]) + int(x.split('-')[1])) / 2 if not pd.isna(x) and '-' in x else x)
-    # train['WindSpeed_ob'] = train['WindSpeed_ob'].apply(
-    #     lambda x: (int(x.split()[0]) + int(x.split()[-1])) / 2 if not pd.isna(x) and type(
-    #         x) != float and 'gusts up to' in x else x)
-    # train['WindSpeed_dense'] = train['WindSpeed_ob'].apply(strtofloat)
-
-    ## Turf
-    # Turf = {'Field Turf': 'Artificial', 'A-Turf Titan': 'Artificial', 'Grass': 'Natural',
-    #         'UBU Sports Speed S5-M': 'Artificial', 'Artificial': 'Artificial', 'DD GrassMaster': 'Artificial',
-    #         'Natural Grass': 'Natural', 'UBU Speed Series-S5-M': 'Artificial', 'FieldTurf': 'Artificial',
-    #         'FieldTurf 360': 'Artificial', 'Natural grass': 'Natural', 'grass': 'Natural', 'Natural': 'Natural',
-    #         'Artifical': 'Artificial', 'FieldTurf360': 'Artificial', 'Naturall Grass': 'Natural',
-    #         'Field turf': 'Artificial', 'SISGrass': 'Artificial', 'Twenty-Four/Seven Turf': 'Artificial',
-    #         'natural grass': 'Natural'}
-    # train['Turf'] = train['Turf'].map(Turf)
-    grass_labels = ['grass', 'natural grass', 'natural', 'naturall grass']
-    train['Grass'] = np.where(train.Turf.str.lower().isin(grass_labels), 1, 0)
-
-    # StadiumType
-    train['StadiumType'] = train['StadiumType'].apply(clean_StadiumType)
-    train['StadiumType'] = train['StadiumType'].apply(transform_StadiumType)
 
     # ——————— after possess ———————
     print(3)

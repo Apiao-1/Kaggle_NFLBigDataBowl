@@ -429,32 +429,33 @@ def preprocess(train):
     return train
 
 if __name__ == '__main__':
-    train = pd.read_csv('../data/train.csv')[:22000]
-    train = preprocess(train)
-
-    X_train = train
-    cat_features = []
-    dense_features = []
-    sss = {}
-    lbls = {}
-    for col in X_train.columns:
-        if X_train[col].dtype == 'object':
-            # print(f)
-            cat_features.append((col, len(train[col].unique())))
-            lbl = LabelEncoder()
-            X_train[col].fillna(-999, inplace=True)
-            lbl.fit(list(X_train[col]) + [-999])
-            X_train[col] = lbl.transform(list(X_train[col]))
-            dic = dict(zip(lbl.classes_, lbl.transform(lbl.classes_)))
-            lbls[col] = dic
-            print(int(np.absolute(X_train[col]).max() + 1))
-
-        else:
-            ss = StandardScaler()
-            X_train[col].fillna(np.mean(X_train[col]), inplace=True)
-            X_train.loc[:, col] = ss.fit_transform(X_train[col].values[:, None])
-            dense_features.append(col)
-            sss[col] = ss
+    a = np.zeros((1,199))
+    # train = pd.read_csv('../data/train.csv')[:22000]
+    # train = preprocess(train)
+    #
+    # X_train = train
+    # cat_features = []
+    # dense_features = []
+    # sss = {}
+    # lbls = {}
+    # for col in X_train.columns:
+    #     if X_train[col].dtype == 'object':
+    #         # print(f)
+    #         cat_features.append((col, len(train[col].unique())))
+    #         lbl = LabelEncoder()
+    #         X_train[col].fillna(-999, inplace=True)
+    #         lbl.fit(list(X_train[col]) + [-999])
+    #         X_train[col] = lbl.transform(list(X_train[col]))
+    #         dic = dict(zip(lbl.classes_, lbl.transform(lbl.classes_)))
+    #         lbls[col] = dic
+    #         print(int(np.absolute(X_train[col]).max() + 1))
+    #
+    #     else:
+    #         ss = StandardScaler()
+    #         X_train[col].fillna(np.mean(X_train[col]), inplace=True)
+    #         X_train.loc[:, col] = ss.fit_transform(X_train[col].values[:, None])
+    #         dense_features.append(col)
+    #         sss[col] = ss
 
 
 
