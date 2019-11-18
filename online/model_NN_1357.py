@@ -153,7 +153,7 @@ def create_features(df, deploy=False):
     #         return new_angle
     #     else:
     #         return (90 - angle) % 360
-
+    #
     # https: // www.kaggle.com / peterhurford / something - is -the - matter -with-orientation
     # def new_orientation(angle, play_direction):
     #     if play_direction == 'left':
@@ -602,13 +602,13 @@ def get_model(x_tr, y_tr, x_val, y_val):
     # x = Dropout(0.5)(x)
     # x = BatchNormalization()(x)
     # x = Dense(1024, activation='relu')(x)
-    x = Dense(1024, input_dim=X.shape[1], activation='relu')(inp)
+    x = Dense(1024, input_dim=X.shape[1], activation='elu')(inp)
     x = Dropout(0.5)(x)
     x = BatchNormalization()(x)
-    x = Dense(512, activation='relu')(x)
+    x = Dense(512, activation='elu')(x)
     x = Dropout(0.5)(x)
     x = BatchNormalization()(x)
-    x = Dense(256, activation='relu')(x)
+    x = Dense(256, activation='elu')(x)
     x = Dropout(0.5)(x)
     x = BatchNormalization()(x)
 
