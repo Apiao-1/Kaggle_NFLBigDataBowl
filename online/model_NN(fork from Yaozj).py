@@ -109,6 +109,13 @@ def create_features(df, deploy=False):
         else:
             return angle
 
+    # def new_orientation(angle, play_direction):
+    #     if play_direction == 'left':
+    #         new_angle = (180.0 + angle) % 360
+    #         return new_angle
+    #     else:
+    #         return angle
+
     def euclidean_distance(x1, y1, x2, y2):
         x_diff = (x1 - x2) ** 2
         y_diff = (y1 - y2) ** 2
@@ -477,7 +484,7 @@ def get_model(x_tr, y_tr, x_val, y_val):
                        mode='min',
                        restore_best_weights=True,
                        verbose=False,
-                       patience=10)
+                       patience=60)
 
     mc = ModelCheckpoint('best_model.h5', monitor='CRPS_score_val', mode='min',
                          save_best_only=True, verbose=False, save_weights_only=True)
