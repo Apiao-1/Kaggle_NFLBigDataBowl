@@ -79,93 +79,6 @@ def orientation_to_cat(x):
     except:
         return "nan"
 
-
-# def preprocess(train):
-#     ## GameClock
-#     train['GameClock_sec'] = train['GameClock'].apply(strtoseconds)
-#     train["GameClock_minute"] = train["GameClock"].apply(lambda x : x.split(":")[0]).astype("object")
-#
-#     ## Height
-#     train['PlayerHeight_dense'] = train['PlayerHeight'].apply(lambda x: 12*int(x.split('-')[0])+int(x.split('-')[1]))
-#
-#     ## Time
-#     train['TimeHandoff'] = train['TimeHandoff'].apply(lambda x: datetime.datetime.strptime(x, "%Y-%m-%dT%H:%M:%S.%fZ"))
-#     train['TimeSnap'] = train['TimeSnap'].apply(lambda x: datetime.datetime.strptime(x, "%Y-%m-%dT%H:%M:%S.%fZ"))
-#
-#     train['TimeDelta'] = train.apply(lambda row: (row['TimeHandoff'] - row['TimeSnap']).total_seconds(), axis=1)
-#     train['PlayerBirthDate'] = train['PlayerBirthDate'].apply(lambda x: datetime.datetime.strptime(x, "%m/%d/%Y"))
-#
-#     ## Age
-#     seconds_in_year = 60*60*24*365.25
-#     train['PlayerAge'] = train.apply(lambda row: (row['TimeHandoff']-row['PlayerBirthDate']).total_seconds()/seconds_in_year, axis=1)
-#     train["PlayerAge_ob"] = train['PlayerAge'].astype(np.int).astype("object")
-#
-#     ## WindSpeed
-#     train['WindSpeed_ob'] = train['WindSpeed'].apply(lambda x: x.lower().replace('mph', '').strip() if not pd.isna(x) else x)
-#     train['WindSpeed_ob'] = train['WindSpeed_ob'].apply(lambda x: (int(x.split('-')[0])+int(x.split('-')[1]))/2 if not pd.isna(x) and '-' in x else x)
-#     train['WindSpeed_ob'] = train['WindSpeed_ob'].apply(lambda x: (int(x.split()[0])+int(x.split()[-1]))/2 if not pd.isna(x) and type(x)!=float and 'gusts up to' in x else x)
-#     train['WindSpeed_dense'] = train['WindSpeed_ob'].apply(strtofloat)
-#
-#     ## Weather
-#     train['GameWeather_process'] = train['GameWeather'].str.lower()
-#     train['GameWeather_process'] = train['GameWeather_process'].apply(lambda x: "indoor" if not pd.isna(x) and "indoor" in x else x)
-#     train['GameWeather_process'] = train['GameWeather_process'].apply(lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party', 'partly') if not pd.isna(x) else x)
-#     train['GameWeather_process'] = train['GameWeather_process'].apply(lambda x: x.replace('clear and sunny', 'sunny and clear') if not pd.isna(x) else x)
-#     train['GameWeather_process'] = train['GameWeather_process'].apply(lambda x: x.replace('skies', '').replace("mostly", "").strip() if not pd.isna(x) else x)
-#     train['GameWeather_dense'] = train['GameWeather_process'].apply(map_weather)
-#
-#     ## Rusher
-#     train['IsRusher'] = (train['NflId'] == train['NflIdRusher'])
-#     train['IsRusher_ob'] = (train['NflId'] == train['NflIdRusher']).astype("object")
-#     temp = train[train["IsRusher"]][["Team", "PlayId"]].rename(columns={"Team":"RusherTeam"})
-#     train = train.merge(temp, on = "PlayId")
-#     train["IsRusherTeam"] = train["Team"] == train["RusherTeam"]
-#
-#     ## dense -> categorical
-#     train["Quarter_ob"] = train["Quarter"].astype("object")
-#     train["Down_ob"] = train["Down"].astype("object")
-#     train["JerseyNumber_ob"] = train["JerseyNumber"].astype("object")
-#     train["YardLine_ob"] = train["YardLine"].astype("object")
-#     # train["DefendersInTheBox_ob"] = train["DefendersInTheBox"].astype("object")
-#     # train["Week_ob"] = train["Week"].astype("object")
-#     # train["TimeDelta_ob"] = train["TimeDelta"].astype("object")
-#
-#
-#     ## Orientation and Dir
-#     train["Orientation_ob"] = train["Orientation"].apply(lambda x : orientation_to_cat(x)).astype("object")
-#     train["Dir_ob"] = train["Dir"].apply(lambda x : orientation_to_cat(x)).astype("object")
-#
-#     train["Orientation_sin"] = train["Orientation"].apply(lambda x : np.sin(x/360 * 2 * np.pi))
-#     train["Orientation_cos"] = train["Orientation"].apply(lambda x : np.cos(x/360 * 2 * np.pi))
-#     train["Dir_sin"] = train["Dir"].apply(lambda x : np.sin(x/360 * 2 * np.pi))
-#     train["Dir_cos"] = train["Dir"].apply(lambda x : np.cos(x/360 * 2 * np.pi))
-#
-#     ## diff Score
-#     train["diffScoreBeforePlay"] = train["HomeScoreBeforePlay"] - train["VisitorScoreBeforePlay"]
-#     train["diffScoreBeforePlay_binary_ob"] = (train["HomeScoreBeforePlay"] > train["VisitorScoreBeforePlay"]).astype("object")
-#
-#     ## Turf
-#     Turf = {'Field Turf':'Artificial', 'A-Turf Titan':'Artificial', 'Grass':'Natural', 'UBU Sports Speed S5-M':'Artificial', 'Artificial':'Artificial', 'DD GrassMaster':'Artificial', 'Natural Grass':'Natural', 'UBU Speed Series-S5-M':'Artificial', 'FieldTurf':'Artificial', 'FieldTurf 360':'Artificial', 'Natural grass':'Natural', 'grass':'Natural', 'Natural':'Natural', 'Artifical':'Artificial', 'FieldTurf360':'Artificial', 'Naturall Grass':'Natural', 'Field turf':'Artificial', 'SISGrass':'Artificial', 'Twenty-Four/Seven Turf':'Artificial', 'natural grass':'Natural'}
-#     train['Turf'] = train['Turf'].map(Turf)
-#
-#     ## OffensePersonnel
-#     temp = train["OffensePersonnel"].iloc[np.arange(0, len(train), 22)].apply(lambda x : pd.Series(OffensePersonnelSplit(x)))
-#     temp.columns = ["Offense" + c for c in temp.columns]
-#     temp["PlayId"] = train["PlayId"].iloc[np.arange(0, len(train), 22)]
-#     train = train.merge(temp, on = "PlayId")
-#
-#     ## DefensePersonnel
-#     temp = train["DefensePersonnel"].iloc[np.arange(0, len(train), 22)].apply(lambda x : pd.Series(DefensePersonnelSplit(x)))
-#     temp.columns = ["Defense" + c for c in temp.columns]
-#     temp["PlayId"] = train["PlayId"].iloc[np.arange(0, len(train), 22)]
-#     train = train.merge(temp, on = "PlayId")
-#
-#     ## sort
-# #     train = train.sort_values(by = ['X']).sort_values(by = ['Dis']).sort_values(by=['PlayId', 'Team', 'IsRusher']).reset_index(drop = True)
-#     train = train.sort_values(by = ['X']).sort_values(by = ['Dis']).sort_values(by=['PlayId', 'IsRusherTeam', 'IsRusher']).reset_index(drop = True)
-#     return train
-
-
 def create_features(df, deploy=False):
     def new_X(x_coordinate, play_direction):
         if play_direction == 'left':
@@ -282,13 +195,13 @@ def create_features(df, deploy=False):
         defense_d = defense_d.groupby(['GameId', 'PlayId']) \
             .agg({'def_dist_to_back': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,
                                        'mad', np.ptp],
-                  'X': ['mean', 'std'],
+                  'X': ['mean', 'std','skew', 'median', q80, q30, pd.DataFrame.kurt,'mad', np.ptp],
                   }) \
             .reset_index()
         defense_d.columns = ['GameId', 'PlayId', 'def_min_dist', 'def_max_dist', 'def_mean_dist', 'def_std_dist',
                              'def_skew_dist', 'def_medn_dist', 'def_q80_dist', 'def_q30_dist', 'def_kurt_dist',
                              'def_mad_dist', 'def_ptp_dist',
-                             'X_mean','X_std',]
+                             'X_mean','X_std','X_skew', 'X_median', 'X_q80', 'X_q30', 'X_kurt', 'X_mad', 'X_ptp']
 
         defense_s = defense[defense['Team'] != defense['RusherTeam']][['GameId', 'PlayId', 'S', 'A']]
         defense_s['SA'] = defense_s[['S', 'A']].apply(lambda x: x[0] + x[1], axis=1)
@@ -480,7 +393,7 @@ def create_features(df, deploy=False):
     static_feats = static_features(df)
     basetable = combine_features(rel_back, def_feats, tm_feats, static_feats, deploy=deploy)
 
-    print(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
+    # print(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
 
     return basetable
 
@@ -538,6 +451,10 @@ class CRPSCallback(Callback):
 
 def get_model(x_tr, y_tr, x_val, y_val):
     inp = Input(shape=(x_tr.shape[1],))
+    # x = Dense(2048, input_dim=X.shape[1], activation='elu')(inp)
+    # x = Dropout(0.5)(x)
+    # x = BatchNormalization()(x)
+    # x = Dense(1024, activation='elu')(x)
     x = Dense(1024, input_dim=X.shape[1], activation='elu')(inp)
     x = Dropout(0.5)(x)
     x = BatchNormalization()(x)
