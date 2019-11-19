@@ -445,7 +445,7 @@ class CRPSCallback(Callback):
             y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
             y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
             val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * X_valid.shape[0])
-            val_s = np.round(val_s, 6)
+            val_s = np.round(val_s, 8)
             logs['CRPS_score_val'] = val_s
 
 
@@ -503,7 +503,7 @@ def get_model(x_tr, y_tr, x_val, y_val):
     #         else:
     #             y_pred[index] = y_pred[index]
     val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * x_val.shape[0])
-    crps = np.round(val_s, 6)
+    crps = np.round(val_s, 8)
 
     return model, crps
 
