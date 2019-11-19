@@ -201,7 +201,7 @@ def create_features(df, deploy=False):
         defense_d.columns = ['GameId', 'PlayId', 'def_min_dist', 'def_max_dist', 'def_mean_dist', 'def_std_dist',
                              'def_skew_dist', 'def_medn_dist', 'def_q80_dist', 'def_q30_dist', 'def_kurt_dist',
                              'def_mad_dist', 'def_ptp_dist',
-                             'X_mean','X_std','X_skew', 'X_median', 'X_q80', 'X_q30', 'X_kurt', 'X_mad', 'X_ptp']
+                             'def_X_mean','def_X_std','def_X_skew', 'def_X_median', 'def_X_q80', 'def_X_q30', 'def_X_kurt', 'def_X_mad', 'def_X_ptp']
 
         defense_s = defense[defense['Team'] != defense['RusherTeam']][['GameId', 'PlayId', 'S', 'A']]
         defense_s['SA'] = defense_s[['S', 'A']].apply(lambda x: x[0] + x[1], axis=1)
@@ -577,7 +577,7 @@ if __name__ == '__main__':
         mean_crps_csv.append(np.mean(crps_csv))
         print("9 folder crps is %f" % np.mean(crps_csv))
 
-    print("mean crps is %f" % np.mean(crps_csv))
+    print("mean crps is %f" % np.mean(mean_crps_csv))
 
     if TRAIN_OFFLINE == False:
         from kaggle.competitions import nflrush
