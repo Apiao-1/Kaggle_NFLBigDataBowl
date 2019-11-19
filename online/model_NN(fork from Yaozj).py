@@ -173,6 +173,12 @@ def create_features(df, deploy=False):
         else:
             return x_coordinate
 
+    def new_Y(y_coordinate, play_direction):
+        if play_direction == 'left':
+            return 160.0/3 - y_coordinate
+        else:
+            return y_coordinate
+
     def new_line(rush_team, field_position, yardline):
         if rush_team == field_position:
             # offense starting at X = 0 plus the 10 yard endzone plus the line of scrimmage
@@ -218,6 +224,7 @@ def create_features(df, deploy=False):
 
     def update_orientation(df, yardline):
         df['X'] = df[['X', 'PlayDirection']].apply(lambda x: new_X(x[0], x[1]), axis=1)
+        df['Y'] = df[['Y', 'PlayDirection']].apply(lambda x: new_Y(x[0], x[1]), axis=1)
         df['Orientation'] = df[['Orientation', 'PlayDirection']].apply(lambda x: new_orientation(x[0], x[1]), axis=1)
         df['Dir'] = df[['Dir', 'PlayDirection']].apply(lambda x: new_orientation(x[0], x[1]), axis=1)
 
@@ -250,13 +257,16 @@ def create_features(df, deploy=False):
         player_distance = player_distance.groupby(
             ['GameId', 'PlayId', 'back_from_scrimmage', 'back_oriented_down_field', 'back_moving_down_field']) \
             .agg({'dist_to_back': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad',
-                                   np.ptp]}) \
+                                   np.ptp],
+                  'X': ['mean', 'std'],
+                  }) \
             .reset_index()
 
         player_distance.columns = ['GameId', 'PlayId', 'back_from_scrimmage', 'back_oriented_down_field',
                                    'back_moving_down_field',
                                    'min_dist', 'max_dist', 'mean_dist', 'std_dist', 'skew_dist', 'medn_dist',
-                                   'q80_dist', 'q30_dist', 'kurt_dist', 'mad_dist', 'ptp_dist']
+                                   'q80_dist', 'q30_dist', 'kurt_dist', 'mad_dist', 'ptp_dist',
+                                   'X_mean','X_std',]
 
         return player_distance
 
@@ -271,25 +281,29 @@ def create_features(df, deploy=False):
             lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
         defense_d = defense_d.groupby(['GameId', 'PlayId']) \
             .agg({'def_dist_to_back': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,
-                                       'mad', np.ptp]}) \
+                                       'mad', np.ptp],
+                  'X': ['mean', 'std'],
+                  }) \
             .reset_index()
         defense_d.columns = ['GameId', 'PlayId', 'def_min_dist', 'def_max_dist', 'def_mean_dist', 'def_std_dist',
                              'def_skew_dist', 'def_medn_dist', 'def_q80_dist', 'def_q30_dist', 'def_kurt_dist',
-                             'def_mad_dist', 'def_ptp_dist']
+                             'def_mad_dist', 'def_ptp_dist',
+                             'X_mean','X_std',]
 
         defense_s = defense[defense['Team'] != defense['RusherTeam']][['GameId', 'PlayId', 'S', 'A']]
         defense_s['SA'] = defense_s[['S', 'A']].apply(lambda x: x[0] + x[1], axis=1)
         defense_s = defense_s.groupby(['GameId', 'PlayId']) \
             .agg({'S': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp],
                   'A': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp],
-                  'SA': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp]}) \
+                  'SA': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp],
+                  }) \
             .reset_index()
         defense_s.columns = ['GameId', 'PlayId', 'def_min_s', 'def_max_s', 'def_mean_s', 'def_std_s', 'def_skew_s',
                              'def_medn_s', 'def_q80_s', 'def_q30_s', 'def_kurt_s', 'def_mad_s', 'def_ptp_s',
                              'def_min_a', 'def_max_a', 'def_mean_a', 'def_std_a', 'def_skew_a', 'def_medn_a',
                              'def_q80_a', 'def_q30_a', 'def_kurt_a', 'def_mad_a', 'def_ptp_a', 'def_min_sa',
                              'def_max_sa', 'def_mean_sa', 'def_std_sa', 'def_skew_sa', 'def_medn_sa', 'def_q80_sa',
-                             'def_q30_sa', 'def_kurt_sa', 'def_mad_sa', 'def_ptp_sa']
+                             'def_q30_sa', 'def_kurt_sa', 'def_mad_sa', 'def_ptp_sa',]
 
         defense = pd.merge(defense_d, defense_s, on=['GameId', 'PlayId'], how='inner')
 
@@ -342,7 +356,7 @@ def create_features(df, deploy=False):
         df['TimeHandoff'] = df['TimeHandoff'].apply(lambda x: datetime.datetime.strptime(x, "%Y-%m-%dT%H:%M:%S.%fZ"))
         df['TimeSnap'] = df['TimeSnap'].apply(lambda x: datetime.datetime.strptime(x, "%Y-%m-%dT%H:%M:%S.%fZ"))
 
-        df['TimeDelta'] = df.apply(lambda row: (row['TimeHandoff'] - row['TimeSnap']).total_seconds(), axis=1)
+        # df['TimeDelta'] = df.apply(lambda row: (row['TimeHandoff'] - row['TimeSnap']).total_seconds(), axis=1)
         df['PlayerBirthDate'] = df['PlayerBirthDate'].apply(lambda x: datetime.datetime.strptime(x, "%m/%d/%Y"))
 
         ## Age
@@ -352,15 +366,15 @@ def create_features(df, deploy=False):
         add_new_feas.append('PlayerAge')
 
         ## WindSpeed
-        df['WindSpeed_ob'] = df['WindSpeed'].apply(
-            lambda x: x.lower().replace('mph', '').strip() if not pd.isna(x) else x)
-        df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
-            lambda x: (int(x.split('-')[0]) + int(x.split('-')[1])) / 2 if not pd.isna(x) and '-' in x else x)
-        df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
-            lambda x: (int(x.split()[0]) + int(x.split()[-1])) / 2 if not pd.isna(x) and type(
-                x) != float and 'gusts up to' in x else x)
-        df['WindSpeed_dense'] = df['WindSpeed_ob'].apply(strtofloat)
-        add_new_feas.append('WindSpeed_dense')
+        # df['WindSpeed_ob'] = df['WindSpeed'].apply(
+        #     lambda x: x.lower().replace('mph', '').strip() if not pd.isna(x) else x)
+        # df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
+        #     lambda x: (int(x.split('-')[0]) + int(x.split('-')[1])) / 2 if not pd.isna(x) and '-' in x else x)
+        # df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
+        #     lambda x: (int(x.split()[0]) + int(x.split()[-1])) / 2 if not pd.isna(x) and type(
+        #         x) != float and 'gusts up to' in x else x)
+        # df['WindSpeed_dense'] = df['WindSpeed_ob'].apply(strtofloat)
+        # add_new_feas.append('WindSpeed_dense')
 
         ## Weather
         df['GameWeather_process'] = df['GameWeather'].str.lower()
@@ -393,8 +407,9 @@ def create_features(df, deploy=False):
         # train["TimeDelta_ob"] = train["TimeDelta"].astype("object")
 
         ## Orientation and Dir
-        df["Orientation_ob"] = df["Orientation"].apply(lambda x: orientation_to_cat(x)).astype("object")
+        # df["Orientation_ob"] = df["Orientation"].apply(lambda x: orientation_to_cat(x)).astype("object")
         df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
+        add_new_feas.append("Dir_ob")
 
         df["Orientation_sin"] = df["Orientation"].apply(lambda x: np.sin(x / 360 * 2 * np.pi))
         df["Orientation_cos"] = df["Orientation"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
@@ -402,6 +417,13 @@ def create_features(df, deploy=False):
         df["Dir_cos"] = df["Dir"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
         add_new_feas.append("Dir_sin")
         add_new_feas.append("Dir_cos")
+        add_new_feas.append("Orientation_cos")
+        add_new_feas.append("Orientation_sin")
+
+        ## Turf
+        grass_labels = ['grass', 'natural grass', 'natural', 'naturall grass']
+        df['Grass'] = np.where(df.Turf.str.lower().isin(grass_labels), 1, 0)
+        add_new_feas.append("Grass")
 
         ## diff Score
         df["diffScoreBeforePlay"] = df["HomeScoreBeforePlay"] - df["VisitorScoreBeforePlay"]
@@ -620,8 +642,8 @@ if __name__ == '__main__':
     mean_crps_csv = []
 
     for k in range(7):
-    # for k in range(5):
-        # kfold = KFold(5, random_state=42 + k, shuffle=True)
+#     for k in range(5):
+#         kfold = KFold(5, random_state=42 + k, shuffle=True)
         kfold = KFold(9, random_state=2019 + 17 * k, shuffle=True)
         j = 0
         crps_csv = []
