@@ -471,8 +471,16 @@ def get_model(x_tr, y_tr, x_val, y_val):
     x = Dense(256, activation='elu')(x)
     x = Dropout(0.5)(x)
     x = BatchNormalization()(x)
+    if classify_type < 128:
+        x = Dense(128, activation='elu')(x)
+        x = Dropout(0.5)(x)
+        x = BatchNormalization()(x)
+    # if classify_type < 64:
+    #     x = Dense(64, activation='elu')(x)
+    #     x = Dropout(0.5)(x)
+    #     x = BatchNormalization()(x)
 
-    out = Dense(199, activation='softmax')(x)
+    out = Dense(classify_type, activation='softmax')(x)
     model = Model(inp, out)
     optadam = Adam(lr=0.001)
     model.compile(optimizer=optadam, loss='categorical_crossentropy', metrics=[])
@@ -500,6 +508,11 @@ def get_model(x_tr, y_tr, x_val, y_val):
     y_valid = y_val
     y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+
+    # y_0 = np.zeros((len(y_pred), 85))
+    # y_pred = np.concatenate((y_pred, y_0), axis=1)
+    # print(y_pred.shape)
+
     #     y_pred[y_pred<0.01] = 0.0
     #     y_pred[y_pred>0.99] = 1.0
     #     for index,item in enumerate(y_pred):
@@ -529,6 +542,9 @@ def predict(x_te):
 
 
 TRAIN_OFFLINE = False
+CLASSIFY_NEGITAVE = -14  # must < 0
+CLASSIFY_POSTIVE = 53 # 99， 75，53， 36
+classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
 
 if __name__ == '__main__':
     if TRAIN_OFFLINE:
@@ -538,28 +554,28 @@ if __name__ == '__main__':
 
     outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
 
+
     train_basetable = create_features(train, False)
 
     train_basetable = process_two(train_basetable)
+    train = train_basetable.loc[(train_basetable['Yards'] >= CLASSIFY_NEGITAVE) & (train_basetable['Yards'] <= CLASSIFY_POSTIVE)]
 
-    print(train_basetable.shape)
-    print(train_basetable.head())
-    X = train_basetable.copy()
+    print("before delete:", train_basetable.shape)
+    print("After delete:", train.shape)
+    # print(train.head())
+    X = train.copy()
     yards = X.Yards
 
-    y = np.zeros((yards.shape[0], 199))
+    # y = np.zeros((yards.shape[0], 199))
+    y = np.zeros((yards.shape[0], classify_type))
     for idx, target in enumerate(list(yards)):
-        y[idx][99 + target] = 1
+        # y[idx][99 + target] = 1
+        y[idx][-CLASSIFY_NEGITAVE + target] = 1
 
     X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
-
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=12345)
-
-    print(X_train.shape, y_train.shape)
-    print(X_val.shape, y_val.shape)
 
     losses = []
     models = []
@@ -599,7 +615,13 @@ if __name__ == '__main__':
             scaled_basetable = scaler.transform(basetable)
 
             y_pred = predict(scaled_basetable)
-            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+
+            y_0 = np.zeros((len(y_pred), 99 + CLASSIFY_NEGITAVE))
+            y_pred = np.concatenate((y_0, y_pred), axis=1)
+            y_1 = np.ones((len(y_pred), 99 - CLASSIFY_POSTIVE))
+            y_pred = np.concatenate((y_pred, y_1), axis=1)
+
             # print(type(y_pred),len(y_pred))
             #         for index,item in enumerate(y_pred):
             #             if item<0.01:
@@ -609,7 +631,7 @@ if __name__ == '__main__':
             #             else:
             #                 y_pred[index] = y_pred[index]
 
-            preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+            preds_df = pd.DataFrame(data=y_pred, columns=sample_prediction_df.columns)
             env.predict(preds_df)
 
         env.write_submission_file()
