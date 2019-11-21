@@ -543,7 +543,7 @@ def predict(x_te):
 
 TRAIN_OFFLINE = False
 CLASSIFY_NEGITAVE = -14  # must < 0
-CLASSIFY_POSTIVE = 53 # 99， 75，53， 36
+CLASSIFY_POSTIVE = 75 # 99， 75，53， 36
 classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
 
 if __name__ == '__main__':
