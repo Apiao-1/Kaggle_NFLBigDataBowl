@@ -162,8 +162,9 @@ def create_features(df, deploy=False):
         carriers = carriers.rename(columns={'X': 'back_X',
                                             'Y': 'back_Y'})
         carriers = carriers[
-            ['GameId', 'PlayId', 'NflIdRusher', 'back_X', 'back_Y', 'back_from_scrimmage', 'back_oriented_down_field',
-             'back_moving_down_field']]
+            ['GameId', 'PlayId', 'NflIdRusher', 'back_X', 'back_Y', 'back_from_scrimmage'
+                , 'back_oriented_down_field','back_moving_down_field'
+             ]]
 
         return carriers
 
@@ -175,15 +176,17 @@ def create_features(df, deploy=False):
             lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
 
         player_distance = player_distance.groupby(
-            ['GameId', 'PlayId', 'back_from_scrimmage', 'back_oriented_down_field', 'back_moving_down_field']) \
+            ['GameId', 'PlayId', 'back_from_scrimmage',
+             'back_oriented_down_field', 'back_moving_down_field'
+             ]) \
             .agg({'dist_to_back': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad',
                                    np.ptp],
                   'X': ['mean', 'std'],
                   }) \
             .reset_index()
 
-        player_distance.columns = ['GameId', 'PlayId', 'back_from_scrimmage', 'back_oriented_down_field',
-                                   'back_moving_down_field',
+        player_distance.columns = ['GameId', 'PlayId', 'back_from_scrimmage',
+                                   'back_oriented_down_field','back_moving_down_field',
                                    'min_dist', 'max_dist', 'mean_dist', 'std_dist', 'skew_dist', 'medn_dist',
                                    'q80_dist', 'q30_dist', 'kurt_dist', 'mad_dist', 'ptp_dist',
                                    'X_mean','X_std',]
@@ -239,10 +242,14 @@ def create_features(df, deploy=False):
         team_d['def_dist_to_back'] = team_d[['X', 'Y', 'RusherX', 'RusherY']].apply(
             lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
         team_d = team_d.groupby(['GameId', 'PlayId']) \
-            .agg({'def_dist_to_back': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,
+            .agg({'def_dist_to_back': [
+            'min',
+            'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,
                                        'mad', np.ptp]}) \
             .reset_index()
-        team_d.columns = ['GameId', 'PlayId', 'tm_min_dist', 'tm_max_dist', 'tm_mean_dist', 'tm_std_dist',
+        team_d.columns = ['GameId', 'PlayId',
+                          'tm_min_dist',
+                          'tm_max_dist', 'tm_mean_dist', 'tm_std_dist',
                           'tm_skew_dist', 'tm_medn_dist', 'tm_q80_dist', 'tm_q30_dist', 'tm_kurt_dist', 'tm_mad_dist',
                           'tm_ptp_dist']
 
@@ -391,6 +398,8 @@ def create_features(df, deploy=False):
 
         return df
 
+    # if deploy == False:
+    #     df.loc[df['Season'] == 2017, 'Orientation'] = np.mod(90 + df.loc[train['Season'] == 2017, 'Orientation'], 360)
     yardline = update_yardline(df)
     df = update_orientation(df, yardline)
     back_feats = back_features(df)
@@ -543,7 +552,7 @@ def predict(x_te):
 
 TRAIN_OFFLINE = False
 CLASSIFY_NEGITAVE = -14  # must < 0
-CLASSIFY_POSTIVE = 75 # 99， 75，53， 36
+CLASSIFY_POSTIVE = 99 # 99， 75，53， 36
 classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
 
 if __name__ == '__main__':
@@ -553,7 +562,6 @@ if __name__ == '__main__':
         train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
 
     outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
-
 
     train_basetable = create_features(train, False)
 
