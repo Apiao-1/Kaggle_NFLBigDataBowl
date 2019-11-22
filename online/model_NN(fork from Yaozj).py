@@ -1,18 +1,13 @@
-import os
-
-TRAIN_ABLE_FALSE = True
-if TRAIN_ABLE_FALSE:
-    os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import KFold
 from keras.layers import BatchNormalization
 from keras.optimizers import Adam
-import datetime
 from keras.layers import Dense, Input, Dropout
 from keras.models import Model
 from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
+import datetime
 import warnings
 
 warnings.filterwarnings("ignore")
