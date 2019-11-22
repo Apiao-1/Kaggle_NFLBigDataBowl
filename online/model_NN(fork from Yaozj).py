@@ -138,7 +138,8 @@ def create_features(df, deploy=False):
         new_yardline = df[df['NflId'] == df['NflIdRusher']]
         new_yardline['YardLine'] = new_yardline[['PossessionTeam', 'FieldPosition', 'YardLine']].apply(
             lambda x: new_line(x[0], x[1], x[2]), axis=1)
-        new_yardline = new_yardline[['GameId', 'PlayId', 'YardLine']]
+        new_yardline['Yards_limit'] = 110 - new_yardline['YardLine']
+        new_yardline = new_yardline[['GameId', 'PlayId', 'YardLine','Yards_limit']]
 
         return new_yardline
 
@@ -365,7 +366,7 @@ def create_features(df, deploy=False):
 
         static_features = df[df['NflId'] == df['NflIdRusher']][
             add_new_feas + ['GameId', 'PlayId', 'X', 'Y', 'S', 'A', 'Dis', 'Orientation', 'Dir',
-                            'YardLine', 'Quarter', 'Down', 'Distance', 'DefendersInTheBox']].drop_duplicates()
+                            'YardLine','Yards_limit', 'Quarter', 'Down', 'Distance', 'DefendersInTheBox']].drop_duplicates()
         #         static_features['DefendersInTheBox'] = static_features['DefendersInTheBox'].fillna(np.mean(static_features['DefendersInTheBox']))
         static_features.fillna(0, inplace=True)
         #         for i in add_new_feas:
@@ -518,6 +519,8 @@ def get_model(x_tr, y_tr, x_val, y_val):
     y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
 
+    # x_val['Yards_limit']
+
     # y_0 = np.zeros((len(y_pred), 85))
     # y_pred = np.concatenate((y_pred, y_0), axis=1)
     # print(y_pred.shape)
@@ -619,6 +622,8 @@ if __name__ == '__main__':
         for (test_df, sample_prediction_df) in iter_test:
             basetable = create_features(test_df, deploy=True)
             basetable = process_two(basetable)
+            Yards_limit = basetable['Yards_limit'][0]
+
             basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
             scaled_basetable = scaler.transform(basetable)
 
@@ -629,6 +634,9 @@ if __name__ == '__main__':
             y_pred = np.concatenate((y_0, y_pred), axis=1)
             y_1 = np.ones((len(y_pred), 99 - CLASSIFY_POSTIVE))
             y_pred = np.concatenate((y_pred, y_1), axis=1)
+
+            y_pred[:, (99 + int(Yards_limit)):] = 1
+            # print(99 + int(Yards_limit))
 
             # print(type(y_pred),len(y_pred))
             #         for index,item in enumerate(y_pred):
