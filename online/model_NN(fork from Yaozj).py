@@ -12,7 +12,7 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-pd.set_option('display.max_columns', 50)
+pd.set_option('display.max_columns', 200)
 pd.set_option('display.max_rows', 150)
 
 
@@ -238,6 +238,7 @@ def create_features(df, deploy=False):
 
         return team
 
+    # tested
     def static_features(df):
 
         add_new_feas = []
@@ -265,9 +266,7 @@ def create_features(df, deploy=False):
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: "indoor" if not pd.isna(x) and "indoor" in x else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
-            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party',
-                                                                                        'partly') if not pd.isna(
-                x) else x)
+            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party','partly') if not pd.isna(x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: x.replace('clear and sunny', 'sunny and clear') if not pd.isna(x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
@@ -330,20 +329,20 @@ def create_features(df, deploy=False):
 
     return basetable
 
-
+# tested
 def process_two(t_):
     t_['fe1'] = pd.Series(np.sqrt(np.absolute(np.square(t_.X.values) + np.square(t_.Y.values))))
     t_['fe5'] = np.square(t_['S'].values) + 2 * t_['A'].values * t_['Dis'].values  # N
-    t_['fe7'] = np.arccos(np.clip(t_['X'].values / t_['Y'].values, -1, 1))  # N
+    # t_['fe7'] = np.arccos(np.clip(t_['X'].values / t_['Y'].values, -1, 1))  # N
     t_['fe8'] = t_['S'].values / np.clip(t_['fe1'].values, 0.6, None)
     radian_angle = (90 - t_['Dir']) * np.pi / 180.0
     t_['fe10'] = np.abs(t_['S'] * np.cos(radian_angle))
     t_['fe11'] = np.abs(t_['S'] * np.sin(radian_angle))
     t_["nextS"] = t_["S"] + t_["A"]
     t_["Sv"] = t_["S"] * np.cos(radian_angle)
-    t_["Sh"] = t_["S"] * np.sin(radian_angle)
+    # t_["Sh"] = t_["S"] * np.sin(radian_angle)
     t_["Av"] = t_["A"] * np.cos(radian_angle)
-    t_["Ah"] = t_["A"] * np.sin(radian_angle)
+    # t_["Ah"] = t_["A"] * np.sin(radian_angle)
     t_["diff_ang"] = t_["Dir"] - t_["Orientation"]
     return t_
 
@@ -415,7 +414,7 @@ def get_model(x_tr, y_tr, x_val, y_val):
                        mode='min',
                        restore_best_weights=True,
                        verbose=False,
-                       patience=60)
+                       patience=80)
 
     mc = ModelCheckpoint('best_model.h5', monitor='CRPS_score_val', mode='min',
                          save_best_only=True, verbose=False, save_weights_only=True)
@@ -476,6 +475,7 @@ if __name__ == '__main__':
         train = pd.read_csv('../input/train.csv', dtype={'WindSpeed': 'object'})
     else:
         train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+        # train.loc[train['Season'] == 2017, 'S'] = (train['S'][train['Season'] == 2017] - 2.4355) / 1.2930 * 1.4551 + 2.7570
 
     outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
 
