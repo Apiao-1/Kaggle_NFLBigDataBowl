@@ -9,6 +9,7 @@ from keras.models import Model
 from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
 import datetime
 import warnings
+import gc
 
 warnings.filterwarnings("ignore")
 
@@ -448,6 +449,7 @@ def get_model(x_tr, y_tr, x_val, y_val):
     #             y_pred[index] = y_pred[index]
     val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * x_val.shape[0])
     crps = np.round(val_s, 8)
+    gc.collect()
 
     return model, crps
 
@@ -480,15 +482,28 @@ if __name__ == '__main__':
     outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
 
     train_basetable = create_features(train, False)
-
     train_basetable = process_two(train_basetable)
-    train = train_basetable.loc[
-        (train_basetable['Yards'] >= CLASSIFY_NEGITAVE) & (train_basetable['Yards'] <= CLASSIFY_POSTIVE)]
+
+    # drop test
+    print("before drop feature:", train_basetable.shape)
+    # columns = ['def_max_dist']
+    # columns = ['def_mean_dist']
+    # columns = ['def_std_dist']
+    # columns = ['def_skew_dist']
+    # columns = ['def_medn_dist']
+    # columns = ['def_q80_dist']
+    # columns = ['def_q30_dist']
+    columns = ['def_kurt_dist']
+
+    train_basetable.drop(columns=columns, inplace=True)
+    print("after drop feature:", train_basetable.shape)
+
+    train = train_basetable.loc[(train_basetable['Yards'] >= CLASSIFY_NEGITAVE) & (train_basetable['Yards'] <= CLASSIFY_POSTIVE)]
 
     print("before delete:", train_basetable.shape)
     print("After delete:", train.shape)
     # print(train.head())
-    X = train.copy()
+    X = train
     yards = X.Yards
 
     # y = np.zeros((yards.shape[0], 199))
@@ -527,41 +542,41 @@ if __name__ == '__main__':
 
     print("mean crps is %f" % np.mean(mean_crps_csv))
 
-    if TRAIN_OFFLINE == False:
-        from kaggle.competitions import nflrush
-
-        env = nflrush.make_env()
-        iter_test = env.iter_test()
-
-        for (test_df, sample_prediction_df) in iter_test:
-            basetable = create_features(test_df, deploy=True)
-            basetable = process_two(basetable)
-            Yards_limit = basetable['Yards_limit'][0]
-
-            basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-            scaled_basetable = scaler.transform(basetable)
-
-            y_pred = predict(scaled_basetable)
-            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-
-            y_0 = np.zeros((len(y_pred), 99 + CLASSIFY_NEGITAVE))
-            y_pred = np.concatenate((y_0, y_pred), axis=1)
-            y_1 = np.ones((len(y_pred), 99 - CLASSIFY_POSTIVE))
-            y_pred = np.concatenate((y_pred, y_1), axis=1)
-
-            y_pred[:, (99 + int(Yards_limit)):] = 1
-            # print(99 + int(Yards_limit))
-
-            # print(type(y_pred),len(y_pred))
-            #         for index,item in enumerate(y_pred):
-            #             if item<0.01:
-            #                 y_pred[index] = 0.0
-            #             elif item>0.99:
-            #                 y_pred[index] = 1.0
-            #             else:
-            #                 y_pred[index] = y_pred[index]
-
-            preds_df = pd.DataFrame(data=y_pred, columns=sample_prediction_df.columns)
-            env.predict(preds_df)
-
-        env.write_submission_file()
+    # if TRAIN_OFFLINE == False:
+    #     from kaggle.competitions import nflrush
+    #
+    #     env = nflrush.make_env()
+    #     iter_test = env.iter_test()
+    #
+    #     for (test_df, sample_prediction_df) in iter_test:
+    #         basetable = create_features(test_df, deploy=True)
+    #         basetable = process_two(basetable)
+    #         Yards_limit = basetable['Yards_limit'][0]
+    #
+    #         basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+    #         scaled_basetable = scaler.transform(basetable)
+    #
+    #         y_pred = predict(scaled_basetable)
+    #         y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+    #
+    #         y_0 = np.zeros((len(y_pred), 99 + CLASSIFY_NEGITAVE))
+    #         y_pred = np.concatenate((y_0, y_pred), axis=1)
+    #         y_1 = np.ones((len(y_pred), 99 - CLASSIFY_POSTIVE))
+    #         y_pred = np.concatenate((y_pred, y_1), axis=1)
+    #
+    #         y_pred[:, (99 + int(Yards_limit)):] = 1
+    #         # print(99 + int(Yards_limit))
+    #
+    #         # print(type(y_pred),len(y_pred))
+    #         #         for index,item in enumerate(y_pred):
+    #         #             if item<0.01:
+    #         #                 y_pred[index] = 0.0
+    #         #             elif item>0.99:
+    #         #                 y_pred[index] = 1.0
+    #         #             else:
+    #         #                 y_pred[index] = y_pred[index]
+    #
+    #         preds_df = pd.DataFrame(data=y_pred, columns=sample_prediction_df.columns)
+    #         env.predict(preds_df)
+    #
+    #     env.write_submission_file()

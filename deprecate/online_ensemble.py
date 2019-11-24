@@ -1,43 +1,22 @@
 # https://www.kaggle.com/enzoamp/nfl-lightgbm/code
 from sklearn.ensemble import RandomForestRegressor
 import numpy as np
+import lightgbm as lgb
 import pandas as pd
-from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold, KFold, cross_val_score
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import StandardScaler
 import datetime
 import warnings
+import os
+from keras.layers import Dense, Input, Flatten, concatenate, Dropout, Lambda
+from keras.models import Model
+from keras.layers import BatchNormalization
+from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
 
 warnings.filterwarnings("ignore")
 
-pd.set_option('display.max_columns', 50)
+pd.set_option('display.max_columns', 200)
 pd.set_option('display.max_rows', 150)
-
-
-def metric_crps(y_true, y_pred):
-    y_true = np.clip(np.cumsum(y_true, axis=1), 0, 1)
-    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-    return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
-
-
-def early_metric_crps(model, X_test, y_test):
-    y_true = np.clip(np.cumsum(y_test, axis=1), 0, 1)
-    y_pred = model.predict(X_test)
-    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-    crps = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
-    # logging.info(crps)
-    return -crps  # 要求是浮点数，并且分数越高越好（因此加了负号）
-
-def strtoseconds(txt):
-    txt = txt.split(':')
-    ans = int(txt[0]) * 60 + int(txt[1]) + int(txt[2]) / 60
-    return ans
-
-
-def strtofloat(x):
-    try:
-        return float(x)
-    except:
-        return -1
 
 
 def map_weather(txt):
@@ -61,28 +40,13 @@ def map_weather(txt):
     return 0
 
 
-def OffensePersonnelSplit(x):
-    dic = {'DB': 0, 'DL': 0, 'LB': 0, 'OL': 0, 'QB': 0, 'RB': 0, 'TE': 0, 'WR': 0}
-    for xx in x.split(","):
-        xxs = xx.split(" ")
-        dic[xxs[-1]] = int(xxs[-2])
-    return dic
-
-
-def DefensePersonnelSplit(x):
-    dic = {'DB': 0, 'DL': 0, 'LB': 0, 'OL': 0}
-    for xx in x.split(","):
-        xxs = xx.split(" ")
-        dic[xxs[-1]] = int(xxs[-2])
-    return dic
-
-
 def orientation_to_cat(x):
     x = np.clip(x, 0, 360 - 1)
     try:
         return str(int(x / 15))
     except:
         return "nan"
+
 
 def create_features(df, deploy=False):
     def new_X(x_coordinate, play_direction):
@@ -93,7 +57,7 @@ def create_features(df, deploy=False):
 
     def new_Y(y_coordinate, play_direction):
         if play_direction == 'left':
-            return 160.0/3 - y_coordinate
+            return 160.0 / 3 - y_coordinate
         else:
             return y_coordinate
 
@@ -143,7 +107,8 @@ def create_features(df, deploy=False):
         new_yardline = df[df['NflId'] == df['NflIdRusher']]
         new_yardline['YardLine'] = new_yardline[['PossessionTeam', 'FieldPosition', 'YardLine']].apply(
             lambda x: new_line(x[0], x[1], x[2]), axis=1)
-        new_yardline = new_yardline[['GameId', 'PlayId', 'YardLine']]
+        new_yardline['Yards_limit'] = 110 - new_yardline['YardLine']
+        new_yardline = new_yardline[['GameId', 'PlayId', 'YardLine', 'Yards_limit']]
 
         return new_yardline
 
@@ -168,7 +133,7 @@ def create_features(df, deploy=False):
                                             'Y': 'back_Y'})
         carriers = carriers[
             ['GameId', 'PlayId', 'NflIdRusher', 'back_X', 'back_Y', 'back_from_scrimmage'
-                , 'back_oriented_down_field','back_moving_down_field'
+                , 'back_oriented_down_field', 'back_moving_down_field'
              ]]
 
         return carriers
@@ -191,10 +156,10 @@ def create_features(df, deploy=False):
             .reset_index()
 
         player_distance.columns = ['GameId', 'PlayId', 'back_from_scrimmage',
-                                   'back_oriented_down_field','back_moving_down_field',
+                                   'back_oriented_down_field', 'back_moving_down_field',
                                    'min_dist', 'max_dist', 'mean_dist', 'std_dist', 'skew_dist', 'medn_dist',
                                    'q80_dist', 'q30_dist', 'kurt_dist', 'mad_dist', 'ptp_dist',
-                                   'X_mean','X_std',]
+                                   'X_mean', 'X_std', ]
 
         return player_distance
 
@@ -210,13 +175,14 @@ def create_features(df, deploy=False):
         defense_d = defense_d.groupby(['GameId', 'PlayId']) \
             .agg({'def_dist_to_back': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,
                                        'mad', np.ptp],
-                  'X': ['mean', 'std','skew', 'median', q80, q30, pd.DataFrame.kurt,'mad', np.ptp],
+                  'X': ['mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp],
                   }) \
             .reset_index()
         defense_d.columns = ['GameId', 'PlayId', 'def_min_dist', 'def_max_dist', 'def_mean_dist', 'def_std_dist',
                              'def_skew_dist', 'def_medn_dist', 'def_q80_dist', 'def_q30_dist', 'def_kurt_dist',
                              'def_mad_dist', 'def_ptp_dist',
-                             'def_X_mean','def_X_std','def_X_skew', 'def_X_median', 'def_X_q80', 'def_X_q30', 'def_X_kurt', 'def_X_mad', 'def_X_ptp']
+                             'def_X_mean', 'def_X_std', 'def_X_skew', 'def_X_median', 'def_X_q80', 'def_X_q30',
+                             'def_X_kurt', 'def_X_mad', 'def_X_ptp']
 
         defense_s = defense[defense['Team'] != defense['RusherTeam']][['GameId', 'PlayId', 'S', 'A']]
         defense_s['SA'] = defense_s[['S', 'A']].apply(lambda x: x[0] + x[1], axis=1)
@@ -231,7 +197,7 @@ def create_features(df, deploy=False):
                              'def_min_a', 'def_max_a', 'def_mean_a', 'def_std_a', 'def_skew_a', 'def_medn_a',
                              'def_q80_a', 'def_q30_a', 'def_kurt_a', 'def_mad_a', 'def_ptp_a', 'def_min_sa',
                              'def_max_sa', 'def_mean_sa', 'def_std_sa', 'def_skew_sa', 'def_medn_sa', 'def_q80_sa',
-                             'def_q30_sa', 'def_kurt_sa', 'def_mad_sa', 'def_ptp_sa',]
+                             'def_q30_sa', 'def_kurt_sa', 'def_mad_sa', 'def_ptp_sa', ]
 
         defense = pd.merge(defense_d, defense_s, on=['GameId', 'PlayId'], how='inner')
 
@@ -250,7 +216,7 @@ def create_features(df, deploy=False):
             .agg({'def_dist_to_back': [
             'min',
             'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,
-                                       'mad', np.ptp]}) \
+            'mad', np.ptp]}) \
             .reset_index()
         team_d.columns = ['GameId', 'PlayId',
                           'tm_min_dist',
@@ -275,6 +241,7 @@ def create_features(df, deploy=False):
 
         return team
 
+    # tested
     def static_features(df):
 
         add_new_feas = []
@@ -297,49 +264,19 @@ def create_features(df, deploy=False):
             lambda row: (row['TimeHandoff'] - row['PlayerBirthDate']).total_seconds() / seconds_in_year, axis=1)
         add_new_feas.append('PlayerAge')
 
-        ## WindSpeed
-        # df['WindSpeed_ob'] = df['WindSpeed'].apply(
-        #     lambda x: x.lower().replace('mph', '').strip() if not pd.isna(x) else x)
-        # df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
-        #     lambda x: (int(x.split('-')[0]) + int(x.split('-')[1])) / 2 if not pd.isna(x) and '-' in x else x)
-        # df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
-        #     lambda x: (int(x.split()[0]) + int(x.split()[-1])) / 2 if not pd.isna(x) and type(
-        #         x) != float and 'gusts up to' in x else x)
-        # df['WindSpeed_dense'] = df['WindSpeed_ob'].apply(strtofloat)
-        # add_new_feas.append('WindSpeed_dense')
-
         ## Weather
         df['GameWeather_process'] = df['GameWeather'].str.lower()
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: "indoor" if not pd.isna(x) and "indoor" in x else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
-            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party',
-                                                                                        'partly') if not pd.isna(
-                x) else x)
+            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party','partly') if not pd.isna(x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: x.replace('clear and sunny', 'sunny and clear') if not pd.isna(x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: x.replace('skies', '').replace("mostly", "").strip() if not pd.isna(x) else x)
         df['GameWeather_dense'] = df['GameWeather_process'].apply(map_weather)
         add_new_feas.append('GameWeather_dense')
-        #         ## Rusher
-        #         train['IsRusher'] = (train['NflId'] == train['NflIdRusher'])
-        #         train['IsRusher_ob'] = (train['NflId'] == train['NflIdRusher']).astype("object")
-        #         temp = train[train["IsRusher"]][["Team", "PlayId"]].rename(columns={"Team":"RusherTeam"})
-        #         train = train.merge(temp, on = "PlayId")
-        #         train["IsRusherTeam"] = train["Team"] == train["RusherTeam"]
 
-        ## dense -> categorical
-        #         train["Quarter_ob"] = train["Quarter"].astype("object")
-        #         train["Down_ob"] = train["Down"].astype("object")
-        #         train["JerseyNumber_ob"] = train["JerseyNumber"].astype("object")
-        #         train["YardLine_ob"] = train["YardLine"].astype("object")
-        # train["DefendersInTheBox_ob"] = train["DefendersInTheBox"].astype("object")
-        # train["Week_ob"] = train["Week"].astype("object")
-        # train["TimeDelta_ob"] = train["TimeDelta"].astype("object")
-
-        ## Orientation and Dir
-        # df["Orientation_ob"] = df["Orientation"].apply(lambda x: orientation_to_cat(x)).astype("object")
         df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
         add_new_feas.append("Dir_ob")
 
@@ -361,20 +298,12 @@ def create_features(df, deploy=False):
         df["diffScoreBeforePlay"] = df["HomeScoreBeforePlay"] - df["VisitorScoreBeforePlay"]
         add_new_feas.append("diffScoreBeforePlay")
 
-        #         df["nextS"] = df["S"] + df["A"]
-        #         df["Sv"] = df["S"] * df["Dir_sin"]
-        #         df["Sh"] = df["S"] * df["Dir_cos"]
-        #         df["Av"] = df["A"] * df["Dir_sin"]
-        #         df["Ah"] = df["A"] * df["Dir_cos"]
-        #         add_new_feas = add_new_feas+["nextS","Sv","Sh","Av","Ah"]
-
         static_features = df[df['NflId'] == df['NflIdRusher']][
             add_new_feas + ['GameId', 'PlayId', 'X', 'Y', 'S', 'A', 'Dis', 'Orientation', 'Dir',
-                            'YardLine', 'Quarter', 'Down', 'Distance', 'DefendersInTheBox']].drop_duplicates()
-        #         static_features['DefendersInTheBox'] = static_features['DefendersInTheBox'].fillna(np.mean(static_features['DefendersInTheBox']))
+                            'YardLine', 'Yards_limit', 'Quarter', 'Down', 'Distance',
+                            'DefendersInTheBox']].drop_duplicates()
+
         static_features.fillna(0, inplace=True)
-        #         for i in add_new_feas:
-        #             static_features[i] = static_features[i].fillna(np.mean(static_features[i]))
 
         return static_features
 
@@ -382,21 +311,6 @@ def create_features(df, deploy=False):
         df = pd.merge(relative_to_back, defense, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, team, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, static, on=['GameId', 'PlayId'], how='inner')
-
-        #         #differnce
-        #         dft = pd.merge(defense,team,on=['GameId','PlayId'],how='inner')
-        #         deflist = defense.columns.tolist()
-        #         deflist.remove('GameId')
-        #         deflist.remove('PlayId')
-        #         teamlist = team.columns.tolist()
-        #         teamlist.remove('GameId')
-        #         teamlist.remove('PlayId')
-        #         dft[deflist] = dft[teamlist].values-dft[deflist].values
-        #         dft.drop(teamlist,axis=1,inplace=True)
-        #         deflist = [i+'_diff' for i in deflist]
-        #         dft.columns = ['GameId','PlayId']+deflist
-
-        #         df = pd.merge(df,dft,on=['GameId','PlayId'],how='inner')
 
         if not deploy:
             df = pd.merge(df, outcomes, on=['GameId', 'PlayId'], how='inner')
@@ -414,216 +328,328 @@ def create_features(df, deploy=False):
     static_feats = static_features(df)
     basetable = combine_features(rel_back, def_feats, tm_feats, static_feats, deploy=deploy)
 
-    # logging.info(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
+    # print(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
 
     return basetable
 
-
+# tested
 def process_two(t_):
     t_['fe1'] = pd.Series(np.sqrt(np.absolute(np.square(t_.X.values) + np.square(t_.Y.values))))
     t_['fe5'] = np.square(t_['S'].values) + 2 * t_['A'].values * t_['Dis'].values  # N
-    t_['fe7'] = np.arccos(np.clip(t_['X'].values / t_['Y'].values, -1, 1))  # N
+    # t_['fe7'] = np.arccos(np.clip(t_['X'].values / t_['Y'].values, -1, 1))  # N
     t_['fe8'] = t_['S'].values / np.clip(t_['fe1'].values, 0.6, None)
     radian_angle = (90 - t_['Dir']) * np.pi / 180.0
     t_['fe10'] = np.abs(t_['S'] * np.cos(radian_angle))
     t_['fe11'] = np.abs(t_['S'] * np.sin(radian_angle))
     t_["nextS"] = t_["S"] + t_["A"]
     t_["Sv"] = t_["S"] * np.cos(radian_angle)
-    t_["Sh"] = t_["S"] * np.sin(radian_angle)
+    # t_["Sh"] = t_["S"] * np.sin(radian_angle)
     t_["Av"] = t_["A"] * np.cos(radian_angle)
-    t_["Ah"] = t_["A"] * np.sin(radian_angle)
+    # t_["Ah"] = t_["A"] * np.sin(radian_angle)
     t_["diff_ang"] = t_["Dir"] - t_["Orientation"]
     return t_
 
-def grid_search_rf(get_param=False):
-    params = {
-        'n_estimators': 200,
-        'min_samples_split': 5,
-        'min_samples_leaf': 13,
-        'max_features': 0.8,
-        'max_depth': 8,
 
-        # 'bootstrap': False,
-        # 'verbose':1,
-        'criterion': 'mae',
-        'random_state': 2019
-    }
+class CRPSCallback(Callback):
 
-    if get_param:
-        return params
+    def __init__(self, validation, predict_batch_size=20, include_on_batch=False):
+        super(CRPSCallback, self).__init__()
+        self.validation = validation
+        self.predict_batch_size = predict_batch_size
+        self.include_on_batch = include_on_batch
 
-    steps = {
-        'n_estimators': {'step': 50, 'min': 1, 'max': 'inf'},
-        'max_depth': {'step': 1, 'min': 1, 'max': 'inf'},
-        'min_samples_split': {'step': 2, 'min': 2, 'max': 'inf'},
-        'min_samples_leaf': {'step': 2, 'min': 1, 'max': 'inf'},
-        'max_features': {'step': 0.1, 'min': 0.1, 'max': 1},
-    }
+    #         print('validation shape',len(self.validation))
 
-    grid_search_auto(steps, params, RandomForestRegressor())
+    def on_batch_begin(self, batch, logs={}):
+        pass
 
+    def on_train_begin(self, logs={}):
+        if not ('CRPS_score_val' in self.params['metrics']):
+            self.params['metrics'].append('CRPS_score_val')
 
-def grid_search_auto(steps, params, estimator):
-    global log
+    def on_batch_end(self, batch, logs={}):
+        if (self.include_on_batch):
+            logs['CRPS_score_val'] = float('-inf')
 
-    old_params = params.copy()
+    def on_epoch_end(self, epoch, logs={}):
+        logs['CRPS_score_val'] = float('-inf')
 
-    logging.info(params)
-
-    logging.info('---------------new grid search for all params------------------')
-    # for循环调整各个参数达到局部最优
-    for name, step in steps.items():
-        score = -99999
-
-        start = params[name] - step['step']
-        if start <= step['min']:
-            start = step['min']
-
-        stop = params[name] + step['step']
-        if step['max'] != 'inf' and stop >= step['max']:
-            stop = step['max']
-        # 调整单个参数达到局部最优
-        while 1:
-
-            if str(step['step']).count('.') == 1:
-                stop += step['step'] / 10
-            else:
-                stop += step['step']
-
-            param_grid = {
-                # 最开始这里会产生3个搜索的参数，begin +- step，但之后的轮次只会根据方向每次搜索一个参数
-                name: np.arange(start, stop, step['step']),
-            }
-
-            best_params, best_score = grid_search(estimator.set_params(**params), param_grid)
-
-            # 找到最优参数或者当前的得分best_score已经低于上一轮的score时结束(这里的低于或高于看具体的评价函数)
-            if best_params[name] == params[name]:
-                logging.info("got best params, round over: %s %r" % (estimator.__class__.__name__, params))
-                break
-
-            if score > best_score:
-                logging.info("score > best_score, round over: %s %r" % (estimator.__class__.__name__, params))
-                break
-
-            # 当产生比当前结果更优的解时，则在此方向是继续寻找
-            direction = (best_params[name] - params[name]) // abs(best_params[name] - params[name])  # 决定了每次只能跑两个参数
-            start = stop = best_params[name] + step['step'] * direction  # 根据方向让下一轮每次搜索一个参数
-
-            params[name] = best_params[name]
-
-            if best_params[name] - step['step'] < step['min'] or (
-                    step['max'] != 'inf' and best_params[name] + step['step'] > step['max']):
-                logging.info("reach params limit, round over. %s %r" % (estimator.__class__.__name__, params))
-                break
-
-            if abs(best_score - score) < abs(.0001 * score):
-                logging.info("abs(best_score - score) < abs(.0001 * score), round over: %d %s %r" % (best_score - score,
-                      estimator.__class__.__name__, params))
-                score = best_score
-                logging.info("update best score, best score = %d " % score)
-                break
-
-            score = best_score
-            logging.info("update best score, best score = : %d" % score)
-
-            logging.info("Next round search: %s %r" % (estimator.__class__.__name__, params))
-
-    old_params = params
-
-    logging.info('grid search: %s\n%r\n' % (estimator.__class__.__name__, params))
-
-def grid_search(estimator, param_grid):
-    start = datetime.datetime.now()
-
-    logging.info('-----------search single param begin-----------')
-    # logging.info(start.strftime('%Y-%m-%d %H:%M:%S'))
-    logging.info("param_grid: %r " % param_grid)
-
-    # train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
-    train = pd.read_csv('/home/aistudio/data/data16375/train.csv', dtype={'WindSpeed': 'object'})
-    global outcomes
-    outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
-    train_basetable = create_features(train, False)
-    train_basetable = process_two(train_basetable)
+        if (self.validation):
+            X_valid, y_valid = self.validation[0], self.validation[1]
+            y_pred = self.model.predict(X_valid)
+            y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
+            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+            val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * X_valid.shape[0])
+            val_s = np.round(val_s, 8)
+            logs['CRPS_score_val'] = val_s
 
 
-    X = train_basetable
+def get_model(x_tr, y_tr, x_val, y_val):
+    inp = Input(shape=(x_tr.shape[1],))
+    # x = Dense(2048, input_dim=X.shape[1], activation='elu')(inp)
+    # x = Dropout(0.5)(x)
+    # x = BatchNormalization()(x)
+    # x = Dense(1024, activation='elu')(x)
+    x = Dense(1024, input_dim=X.shape[1], activation='elu')(inp)
+    x = Dropout(0.5)(x)
+    x = BatchNormalization()(x)
+    x = Dense(512, activation='elu')(x)
+    x = Dropout(0.5)(x)
+    x = BatchNormalization()(x)
+    x = Dense(256, activation='elu')(x)
+    x = Dropout(0.5)(x)
+    x = BatchNormalization()(x)
+    if classify_type < 128:
+        x = Dense(128, activation='elu')(x)
+        x = Dropout(0.5)(x)
+        x = BatchNormalization()(x)
+    # if classify_type < 64:
+    #     x = Dense(64, activation='elu')(x)
+    #     x = Dropout(0.5)(x)
+    #     x = BatchNormalization()(x)
+
+    out = Dense(classify_type, activation='softmax')(x)
+    model = Model(inp, out)
+    optadam = Adam(lr=0.001)
+    model.compile(optimizer=optadam, loss='categorical_crossentropy', metrics=[])
+
+    es = EarlyStopping(monitor='CRPS_score_val',
+                       mode='min',
+                       restore_best_weights=True,
+                       verbose=False,
+                       patience=80)
+
+    mc = ModelCheckpoint('best_model.h5', monitor='CRPS_score_val', mode='min',
+                         save_best_only=True, verbose=False, save_weights_only=True)
+
+    bsz = 1024
+    steps = x_tr.shape[0] / bsz
+
+    model.fit(x_tr, y_tr, callbacks=[CRPSCallback(validation=(x_val, y_val)), es, mc], epochs=100, batch_size=bsz,
+              verbose=False)
+    model.load_weights("best_model.h5")
+
+    y_pred = model.predict(x_val)
+    y_valid = y_val
+    y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
+    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+
+    # x_val['Yards_limit']
+
+    # y_0 = np.zeros((len(y_pred), 85))
+    # y_pred = np.concatenate((y_pred, y_0), axis=1)
+    # print(y_pred.shape)
+
+    #     y_pred[y_pred<0.01] = 0.0
+    #     y_pred[y_pred>0.99] = 1.0
+    #     for index,item in enumerate(y_pred):
+    #         if item<0.001:
+    #             y_pred[index] = 0.0
+    #         elif item>0.999:
+    #             y_pred[index] = 1.0
+    #         else:
+    #             y_pred[index] = y_pred[index]
+    val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * x_val.shape[0])
+    crps = np.round(val_s, 8)
+
+    return model, crps
+
+
+def predict(x_te):
+    model_num = len(models)
+    for k, m in enumerate(models):
+        if k == 0:
+            y_pred = m.predict(x_te, batch_size=1024)
+        else:
+            y_pred += m.predict(x_te, batch_size=1024)
+
+    y_pred = y_pred / model_num
+
+    return y_pred
+
+
+
+
+def train_lgb(X, y, single=True):
+    lgb_models = []
+    scores = []
+    kf = KFold(n_splits=5, random_state=42)
+    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+        # print(f'Fold : {i}')
+        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+        y_true = y_val.copy()
+
+        y_train = np.argmax(y_train, axis=1)
+        y_val = np.argmax(y_val, axis=1)
+        # print(X_train.shape, y_train.shape)  # (800, 199)
+        # print(X_val.shape, y_val.shape)  # (800, 199)
+
+        param = {
+            # 'n_estimators': 500,
+            'learning_rate': 0.005,
+
+            'num_leaves': 8,  # Original 50
+            'max_depth': 3,
+
+            'min_data_in_leaf': 101,  # min_child_samples
+            'max_bin': 75,
+            'min_child_weight': 1,
+
+            "feature_fraction": 0.8,  # 0.9 colsample_bytree
+            "bagging_freq": 1,
+            "bagging_fraction": 0.8,  # 'subsample'
+            "bagging_seed": 42,
+
+            'min_split_gain': 0,
+            "lambda_l1": 0.01,
+            "lambda_l2": 0.01,
+
+            "boosting": "gbdt",
+            'num_class': 199,  # 199 possible places
+            'objective': 'multiclass',
+            "metric": "multi_logloss",
+            "verbosity": -1,
+            "seed": 42,
+        }
+
+        trn_data = lgb.Dataset(X_train, label=y_train)
+        val_data = lgb.Dataset(X_val, label=y_val)
+        num_round = 10000
+        model = lgb.train(param, trn_data, num_round, valid_sets=[trn_data, val_data],verbose_eval=False,
+                          early_stopping_rounds=60)
+        lgb_models.append(model)
+        y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+        # print(y_pred.shape)  # (200, 199)
+        score_ = metric_crps(y_true, y_pred)
+        # print(score_)
+        scores.append(score_)
+        lgb_models.append(model)
+    print("lgb mean score:", np.mean(scores))
+
+    if single:
+        # min_index = 0
+        # min = scores[min_index]
+        # for i, s in scores:
+        #     if s < min:
+        #         min = s
+        #         min_index = i
+        # return lgb_models[min_index]
+        return lgb_models[0]
+    return lgb_models
+
+def train_rf(X, y, single=True):
+    rf_models = []
+    scores = []
+    kf = KFold(n_splits=5, random_state=42)
+    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+        # print(X_train.shape, y_train.shape)  # (800, 199)
+        # print(X_val.shape, y_val.shape)
+        model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
+                                      n_estimators=250, n_jobs=-1, random_state=42)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_val)
+        # print(y_pred.shape) # (200, 199)
+        score_ = metric_crps(y_val, y_pred)
+        # print(score_)
+        scores.append(score_)
+        rf_models.append(model)
+    print("rf mean score:", np.mean(scores))
+
+    if single:
+        # min_index = 0
+        # min = scores[min_index]
+        # for i, s in scores:
+        #     if s < min:
+        #         min = s
+        #         min_index = i
+        # return rf_models[min_index]
+        return rf_models[0]
+    return rf_models
+
+def train_NN(X, y, single=True, seed = 42):
+    models = []
+    scores = []
+    kf = KFold(n_splits=5, random_state=seed)
+    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+        # print(X_train.shape, y_train.shape)  # (800, 199)
+        # print(X_val.shape, y_val.shape)
+        model, crps = get_NN_model(X_train, y_train, X_val, y_val)
+        models.append(model)
+        scores.append(crps)
+    print("NN mean score:", np.mean(scores))
+
+    if single:
+        # min_index = 0
+        # min = scores[min_index]
+        # for i, s in scores:
+        #     if s < min:
+        #         min = s
+        #         min_index = i
+        # return models[min_index]
+        return models[0]
+    return models
+
+
+TRAIN_OFFLINE = False
+CLASSIFY_NEGITAVE = -14  # must < 0
+CLASSIFY_POSTIVE = 99  # 99， 75，53， 36
+classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
+
+if __name__ == '__main__':
+    path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
+    if TRAIN_OFFLINE:
+        if os.path.exists(path):
+            train_basetable = pd.read_csv(path)
+        else:
+            train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
+            outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+            train_basetable = create_features(train, False)
+            train_basetable.to_csv(path, index=False)
+    else:
+        train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+        outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+        train_basetable = create_features(train, False)
+
+    X = train_basetable.copy()
     yards = X.Yards
-
-    y = np.zeros((yards.shape[0], classify_type))
+    y = np.zeros((yards.shape[0], 199))
     for idx, target in enumerate(list(yards)):
-        y[idx][-CLASSIFY_NEGITAVE + target] = 1
+        y[idx][99 + target] = 1
     X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    # data = feature.get_train_tree_data()
+    clfs = ['NN', 'rf', 'lgb']
+    models = []
+    for j, v in enumerate(clfs):
+        clf = eval('train_%s' % v)(X, y, False)
+        models.append(clf)
+    models.append(train_NN(X,y,False, seed=43))
+    # flatten
+    # models = sum(models, [])
+    # print(len(models))
 
-    estimator_name = estimator.__class__.__name__
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.15, random_state=2019)
-    if estimator_name is not 'XGBClassifier' and estimator_name is not 'LGBMClassifier':
-        X_train = X
-        y_train = y
+    for model_list in models:
+        y_pred = np.mean([model.predict(scaled_basetable) for model in model_list], axis=0)
 
-    # logging.info(X_train.shape, y_train.shape)
-    # logging.info(X_val.shape, y_val.shape)
+    from kaggle.competitions import nflrush
 
-    # clf = GridSearchCV(estimator=estimator, param_grid=param_grid, n_jobs=n_jobs, cv=5)
-    # clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring='neg_mean_absolute_error', n_jobs=n_jobs,cv=5)
-    clf = GridSearchCV(estimator=estimator, param_grid=param_grid, scoring=early_metric_crps, cv=5)
+    env = nflrush.make_env()
+    for (test_df, sample_prediction_df) in env.iter_test():
+        basetable = create_features(test_df, deploy=True)
 
-    clf = fit_eval_metric(clf, X_train, y_train, estimator_name, X_test=X_val, y_test=y_val)  # 拟合评估指标
+        basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+        scaled_basetable = scaler.transform(basetable)
 
-    means = clf.cv_results_['mean_test_score']
-    stds = clf.cv_results_['std_test_score']
-    for mean, std, params in zip(means, stds, clf.cv_results_['params']):
-        logging.info('%0.10f (+/-%0.05f) for %r\n' % (mean, std * 2, params))
-    logging.info('best params: %r' % clf.best_params_)
-    logging.info('best score: %d'% clf.best_score_)
-    logging.info('time: %s' % str((datetime.datetime.now() - start)).split('.')[0])
-    logging.info('-----------search single param end-----------\n')
+        y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
+        y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
 
-    return clf.best_params_, clf.best_score_
+        preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+        preds_df.iloc[:, :50] = 0
+        preds_df.iloc[:, -50:] = 1
+        env.predict(preds_df)
 
-
-def fit_eval_metric(estimator, X, y, name=None, X_test=None, y_test=None):
-    if name is None:
-        name = estimator.__class__.__name__
-
-    if X_test is None:
-        estimator.fit(X, y)
-    else:
-        if name is 'XGBClassifier' or name is 'LGBMClassifier':
-            logging.info("early stopping")
-            estimator.fit(X, y, eval_set=[(X, y), (X_test, y_test)], early_stopping_rounds=40,
-                          eval_metric=early_metric_crps)
-        else:
-            estimator.fit(X, y)
-
-    return estimator
-
-import logging
-from logging.handlers import TimedRotatingFileHandler
-import re
-
-def init_log():
-    logging.getLogger('bloomfilter').setLevel('WARN')
-    log_file_handler = TimedRotatingFileHandler(filename="bloomfilter.log", when="D", interval=1, backupCount=7)
-    log_file_handler.suffix = "%Y-%m-%d"
-    log_file_handler.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-    log_fmt = '%(asctime)s - %(name)s - %(levelname)s- %(filename)s:%(lineno)s - %(threadName)s - %(message)s'
-    formatter = logging.Formatter(log_fmt)
-    log_file_handler.setFormatter(formatter)
-    logging.getLogger().setLevel(logging.INFO)
-    logging.getLogger().addHandler(log_file_handler)
-
-CLASSIFY_NEGITAVE = -14  # must < 0
-CLASSIFY_POSTIVE = 99 # 99， 75，53， 36
-classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
-if __name__ == '__main__':
-    init_log()
-    logging.info("----------new grid search--------")
-    # sys.stdout = open('rf.log', 'w')
-    grid_search_rf()
+    env.write_submission_file()

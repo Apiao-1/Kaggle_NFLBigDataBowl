@@ -9,6 +9,7 @@ from sklearn.preprocessing import StandardScaler
 import datetime
 import warnings
 import os
+import matplotlib.pyplot as plt
 
 warnings.filterwarnings("ignore")
 
@@ -21,6 +22,14 @@ def metric_crps(y_true, y_pred):
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
     return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
 
+def crps_eval(y_pred, dataset, is_higher_better=False):
+    labels = dataset.get_label()
+    y_true = np.zeros((len(labels),114))
+    for i, v in enumerate(labels):
+        y_true[i, int(v):] = 1
+    y_pred = y_pred.reshape(-1, 114, order='F')
+    y_pred = np.clip(y_pred.cumsum(axis=1), 0, 1)
+    return 'crps', np.mean((y_pred - y_true)**2), False
 
 def strtoseconds(txt):
     txt = txt.split(':')
@@ -196,13 +205,13 @@ def create_features(df, deploy=False):
         defense_d = defense_d.groupby(['GameId', 'PlayId']) \
             .agg({'def_dist_to_back': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,
                                        'mad', np.ptp],
-                  'X': ['mean', 'std'],
+                  'X': ['mean', 'std','skew', 'median', q80, q30, pd.DataFrame.kurt,'mad', np.ptp],
                   }) \
             .reset_index()
         defense_d.columns = ['GameId', 'PlayId', 'def_min_dist', 'def_max_dist', 'def_mean_dist', 'def_std_dist',
                              'def_skew_dist', 'def_medn_dist', 'def_q80_dist', 'def_q30_dist', 'def_kurt_dist',
                              'def_mad_dist', 'def_ptp_dist',
-                             'X_mean', 'X_std', ]
+                             'def_X_mean','def_X_std','def_X_skew', 'def_X_median', 'def_X_q80', 'def_X_q30', 'def_X_kurt', 'def_X_mad', 'def_X_ptp']
 
         defense_s = defense[defense['Team'] != defense['RusherTeam']][['GameId', 'PlayId', 'S', 'A']]
         defense_s['SA'] = defense_s[['S', 'A']].apply(lambda x: x[0] + x[1], axis=1)
@@ -217,7 +226,7 @@ def create_features(df, deploy=False):
                              'def_min_a', 'def_max_a', 'def_mean_a', 'def_std_a', 'def_skew_a', 'def_medn_a',
                              'def_q80_a', 'def_q30_a', 'def_kurt_a', 'def_mad_a', 'def_ptp_a', 'def_min_sa',
                              'def_max_sa', 'def_mean_sa', 'def_std_sa', 'def_skew_sa', 'def_medn_sa', 'def_q80_sa',
-                             'def_q30_sa', 'def_kurt_sa', 'def_mad_sa', 'def_ptp_sa', ]
+                             'def_q30_sa', 'def_kurt_sa', 'def_mad_sa', 'def_ptp_sa',]
 
         defense = pd.merge(defense_d, defense_s, on=['GameId', 'PlayId'], how='inner')
 
@@ -423,7 +432,7 @@ if __name__ == '__main__':
     path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
     if TRAIN_OFFLINE:
         if os.path.exists(path):
-            train_basetable = pd.read_csv(path)
+            train_basetable = pd.read_csv(path)[:100]
         else:
             train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
             outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
@@ -438,88 +447,111 @@ if __name__ == '__main__':
 
     X = train_basetable.copy()
     yards = X.Yards
-    y = np.zeros((yards.shape[0], 199))
+    # y = np.zeros((yards.shape[0], 199))
+    y = np.zeros((yards.shape[0], 114))
     for idx, target in enumerate(list(yards)):
-        y[idx][99 + target] = 1
+        # y[idx][99 + target] = 1
+        y[idx][14 + target] = 1
     X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
+    columns = X.columns
 
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
+    losses = []
     models = []
-    kf = KFold(n_splits=5, random_state=42)
-    score = []
+    mean_crps_csv = []
 
     # y = np.argmax(y, axis=1) # 这里还有步隐含的含义：即把负的标签通过取index变为正的了
 
-    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
-        print(f'Fold : {i}')
-        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
-        y_true = y_val.copy()
+    for k in range(7):
+#     for k in range(5):
+#         kfold = KFold(5, random_state=42 + k, shuffle=True)
+        kfold = KFold(9, random_state=2019 + 17 * k, shuffle=True)
+        j = 0
+        crps_csv = []
+        for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(X, y)):
+            j += 1
+            if j > 3:
+                break
+            X_train, X_val, y_train, y_val = X[tr_inds], X[val_inds], y[tr_inds], y[val_inds]
+            y_true = y_val.copy()
 
-        y_train = np.argmax(y_train, axis=1)
-        y_val = np.argmax(y_val, axis=1)
-        print(X_train.shape, y_train.shape)  # (800, 199)
-        print(X_val.shape, y_val.shape)  # (800, 199)
-        # model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
-        #                               n_estimators=50, n_jobs=-1, random_state=42)
-        param = {
-            # 'n_estimators': 500,
-            'learning_rate': 0.01,
+            y_train = np.argmax(y_train, axis=1)
+            y_val = np.argmax(y_val, axis=1)
+            print(X_train.shape, y_train.shape)  # (800, 199)
+            print(X_val.shape, y_val.shape)  # (800, 199)
+            param = {
+                # 'n_estimators': 500,
+                'learning_rate': 0.01,
 
-            'num_leaves': 28,  # Original 50
-            'max_depth': 5,
+                'num_leaves': 28,  # Original 50
+                'max_depth': 5,
 
-            'min_data_in_leaf': 101,  # min_child_samples
-            'max_bin': 75,
-            'min_child_weight': 7,
+                'min_data_in_leaf': 101,  # min_child_samples
+                'max_bin': 75,
+                'min_child_weight': 7,
 
-            "feature_fraction": 0.8,  # 0.9 colsample_bytree
-            "bagging_freq": 1,
-            "bagging_fraction": 0.8,  # 'subsample'
-            "bagging_seed": 42,
+                "feature_fraction": 0.8,  # 0.9 colsample_bytree
+                "bagging_freq": 1,
+                "bagging_fraction": 0.8,  # 'subsample'
+                "bagging_seed": 42,
 
-            'min_split_gain': 0.0,
-            "lambda_l1": 0.8,
-            "lambda_l2": 0.6,
+                'min_split_gain': 0.0,
+                "lambda_l1": 0.8,
+                "lambda_l2": 0.6,
 
-            "boosting": "gbdt",
-            'num_class': 199,  # 199 possible places
-            'objective': 'multiclass',
-            "metric": "multi_logloss",
-            "verbosity": -1,
-            "seed": 42,
-            'importance_type': 'gain',
-        }
+                "boosting": "gbdt",
+                'num_class': 114,  # 199 possible places
+                # 'num_class': 199,  # 199 possible places
+                'objective': 'multiclass',
+                "metric": "None",
+                # "metric": "multi_logloss",
+                "verbosity": -1,
+                "seed": 42,
+            }
 
-        trn_data = lgb.Dataset(X_train, label=y_train)
-        val_data = lgb.Dataset(X_val, label=y_val)
-        num_round = 10000
-        # model.fit(X_train, y_train, eval_set = [(X_train,y_train),(X_val, y_val)], early_stopping_rounds=60)
-        model = lgb.train(param, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=False,
-                          early_stopping_rounds=60)
+            trn_data = lgb.Dataset(X_train, label=y_train)
+            val_data = lgb.Dataset(X_val, label=y_val)
+            num_round = 100000
+            # model.fit(X_train, y_train, eval_set = [(X_train,y_train),(X_val, y_val)], early_stopping_rounds=60)
+            model = lgb.train(param, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=1000,
+                              early_stopping_rounds=200, feval = crps_eval)
 
-        # y_pred = model.predict(X_val)
-        y_pred = model.predict(X_val, num_iteration=model.best_iteration)
-        print(y_pred.shape)  # (200, 199)
-        score_ = metric_crps(y_true, y_pred)
-        print(score_)
-        score.append(score_)
-        models.append(model)
-    print(np.mean(score))
+            # plot feature importance
+            if k_fold == 1 and j == 1:
+                fscores = pd.Series(model.feature_importance(importance_type="gain"), columns).sort_values(ascending=False)
+                fscores.plot(kind='bar', title='Feature Importance(importance_type="gain")', figsize=(20, 10))
+                plt.ylabel('Feature Importance Score')
+                plt.show()
+
+            y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+            # print(y_pred.shape)  # (200, 199)
+            crps = metric_crps(y_true, y_pred)
+            crps_csv.append(crps)
+            models.append(model)
+        mean_crps_csv.append(np.mean(crps_csv))
+        print("9 folder crps is %f" % np.mean(crps_csv))
+
+    print("mean crps is %f" % np.mean(mean_crps_csv))
+
     from kaggle.competitions import nflrush
 
     env = nflrush.make_env()
     for (test_df, sample_prediction_df) in env.iter_test():
         basetable = create_features(test_df, deploy=True)
+        basetable = process_two(basetable)
 
         basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
         scaled_basetable = scaler.transform(basetable)
 
         y_pred = np.mean([model.predict(scaled_basetable) for model in models], axis=0)
-        y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1).tolist()[0]
+        y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
 
-        preds_df = pd.DataFrame(data=[y_pred], columns=sample_prediction_df.columns)
+        y_0 = np.zeros((len(y_pred), 85))
+        y_pred = np.concatenate((y_0, y_pred), axis=1)
+
+        preds_df = pd.DataFrame(data=y_pred, columns=sample_prediction_df.columns)
         env.predict(preds_df)
 
     env.write_submission_file()

@@ -6,15 +6,11 @@ import datetime
 import warnings
 from string import punctuation
 import re
-from keras.layers import BatchNormalization, Dropout
-from keras.layers import Dense
-from keras.models import Sequential
-from keras.callbacks import Callback, EarlyStopping
 import math
 
 warnings.filterwarnings('ignore')
 pd.set_option('expand_frame_repr', False)
-pd.set_option('display.max_rows', 50)
+pd.set_option('display.max_rows', 200)
 pd.set_option('display.max_columns', 200)
 
 
@@ -429,8 +425,14 @@ def preprocess(train):
     return train
 
 if __name__ == '__main__':
-    a = np.zeros((1,199))
-    # train = pd.read_csv('../data/train.csv')[:22000]
+    # a = np.zeros((1,199))
+    # train = pd.read_csv('../data/train.csv')
+    train = pd.read_csv('../cache_feature.csv')
+    train['Yards_limit'] = 110 - train['YardLine']
+    # print(train.loc[train['Yards_limit'] < train['Yards']])
+    print(train.loc[train['YardLine'] >= 100 ])
+
+    # print(train[train['GameId']==2017090700].groupby('PlayId').apply[['GameId','PlayId','Yards','YardLine','Down','GameClock','PossessionTeam']])
     # train = preprocess(train)
     #
     # X_train = train

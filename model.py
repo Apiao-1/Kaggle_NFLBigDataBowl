@@ -15,7 +15,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from xgboost.sklearn import XGBClassifier
 # from NFLBigDataBowl import feature
-from NFLBigDataBowl.online import model_NN_1362
+from NFLBigDataBowl.online import model_NN_1357
 from NFLBigDataBowl.deprecate import logger
 
 cpu_jobs = os.cpu_count() - 1
@@ -69,7 +69,7 @@ def get_train_data():
     else:
         train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:22000]
         outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
-        train = model_NN_1362.create_features(train, False)
+        train = model_NN_1357.create_features(train, False)
         train.to_csv(path, index=False)
     return train
 

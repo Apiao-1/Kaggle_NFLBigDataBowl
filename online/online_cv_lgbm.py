@@ -1,4 +1,6 @@
 # https://www.kaggle.com/enzoamp/nfl-lightgbm/code
+import sys
+sys.path.append('/home/aistudio/external-libraries')
 import numpy as np
 import lightgbm as lgb
 import pandas as pd
@@ -7,7 +9,6 @@ from sklearn.preprocessing import StandardScaler
 import datetime
 import warnings
 import os
-import sys
 
 warnings.filterwarnings("ignore")
 
@@ -325,7 +326,7 @@ def create_features(df, deploy=False):
     static_feats = static_features(df)
     basetable = combine_features(rel_back, def_feats, tm_feats, static_feats, deploy=deploy)
 
-    # print(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
+    # logging.info(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
 
     return basetable
 
@@ -351,6 +352,22 @@ best_score = 9999
 best_param = {}
 
 
+def metric_crps(y_true, y_pred):
+    y_true = np.clip(np.cumsum(y_true, axis=1), 0, 1)
+    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+    return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
+
+
+def crps_eval(y_pred, dataset, is_higher_better=False):
+    labels = dataset.get_label()
+    y_true = np.zeros((len(labels), classify_type))
+    for i, v in enumerate(labels):
+        y_true[i, int(v):] = 1
+    y_pred = y_pred.reshape(-1, classify_type, order='F')
+    y_pred = np.clip(y_pred.cumsum(axis=1), 0, 1)
+    return 'crps', np.mean((y_pred - y_true) ** 2), False
+
+
 def find_best_param(X, y, params):
     kf = KFold(n_splits=5, random_state=2019)
     score = []
@@ -363,20 +380,35 @@ def find_best_param(X, y, params):
         val_data = lgb.Dataset(X_val, label=y_val)
         num_round = 10000
         model = lgb.train(params, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=False,
-                          early_stopping_rounds=200, feval=crps_eval)
+                          early_stopping_rounds=150, feval=crps_eval)
         y_pred = model.predict(X_val, num_iteration=model.best_iteration)
         score_ = metric_crps(y_true, y_pred)
-        # print("%d folder with score %f" % (i, score_))
+        # logging.info("%d folder with score %f" % (i, score_))
         score.append(score_)
     mean_score = np.mean(score)
-    print("mean_score:", mean_score)
+    logging.info("mean_score: %f" % mean_score)
     global best_score, best_param
     if mean_score <= best_score:
         best_score = mean_score
-        print("update best_score:", best_score)
+        logging.info("update best_score: %f" % best_score)
         best_param = params
-        print("update best params:", best_param)
+        logging.info("update best params: %s" % best_param)
 
+
+import logging
+from logging.handlers import TimedRotatingFileHandler
+import re
+
+def init_log():
+    logging.getLogger('bloomfilter').setLevel('WARN')
+    log_file_handler = TimedRotatingFileHandler(filename="bloomfilter.log", when="D", interval=1, backupCount=7)
+    log_file_handler.suffix = "%Y-%m-%d"
+    log_file_handler.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    log_fmt = '%(asctime)s - %(name)s - %(levelname)s- %(filename)s:%(lineno)s - %(threadName)s - %(message)s'
+    formatter = logging.Formatter(log_fmt)
+    log_file_handler.setFormatter(formatter)
+    logging.getLogger().setLevel(logging.INFO)
+    logging.getLogger().addHandler(log_file_handler)
 
 TRAIN_OFFLINE = False
 CLASSIFY_NEGITAVE = -14  # must < 0
@@ -384,10 +416,12 @@ CLASSIFY_POSTIVE = 99  # 99， 75，53， 36
 classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
 
 if __name__ == '__main__':
-    sys.stdout = open('start.log', 'w')
+    init_log()
+    logging.info("----------new grid search--------")
+    # sys.stdout = open('start.log', 'w')
 
     start = datetime.datetime.now()
-    print("start at:", start.strftime('%Y-%m-%d %H:%M:%S'))
+    logging.info("start at: %s" % start.strftime('%Y-%m-%d %H:%M:%S'))
 
     path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
 
@@ -402,8 +436,9 @@ if __name__ == '__main__':
             train_basetable.to_csv(path, index=False)
     else:
         # train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
-        train = pd.read_csv('/home/aistudio/data/data16375/train.csv', dtype={'WindSpeed': 'object'})
-        print("load data:", train.shape)
+        train = pd.read_csv('/home/aistudio/data/data16525/train.csv', dtype={'WindSpeed': 'object'}) # 163
+        # train = pd.read_csv('/home/aistudio/data/data16375/train.csv', dtype={'WindSpeed': 'object'}) #phone
+        logging.info(train.shape)
         outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
         train_basetable = create_features(train, False)
         train_basetable = process_two(train_basetable)
@@ -421,11 +456,11 @@ if __name__ == '__main__':
         # 'n_estimators': 500,
         'learning_rate': 0.1,
 
-        'num_leaves': 32,  # Original 50
-        'max_depth': 5,
+        'num_leaves': 12,  # Original 50
+        'max_depth': 4,
 
-        'min_data_in_leaf': 101,  # min_child_samples
-        'max_bin': 55,
+        'min_data_in_leaf': 91,  # min_child_samples
+        'max_bin': 58,
         'min_child_weight': 7,
 
         "feature_fraction": 0.8,  # 0.9 colsample_bytree
@@ -448,7 +483,7 @@ if __name__ == '__main__':
     }
     find_best_param(X, y, params)
 
-    # print("调参1：提高准确率")
+    # logging.info("调参1：提高准确率")
     # for num_leaves in range(5, 100, 5):
     #     for max_depth in range(3, 8, 1):
     #         params['num_leaves'] = num_leaves
@@ -456,32 +491,32 @@ if __name__ == '__main__':
     #         find_best_param(X, y, params)
     # params = best_param
 
-    # print("调参1：提高准确率")
-    # for max_depth in range(3, 10, 1):
+    # logging.info("调参1：提高准确率")
+    # for max_depth in range(4, 10, 1):
     #     limit = min(pow(2, max_depth) + 1,100)
     #     for num_leaves in range(2, limit, 5):
     #         params['num_leaves'] = num_leaves
     #         params['max_depth'] = max_depth
     #         find_best_param(X, y, params)
-    #     print("current max depth: ", max_depth)
+    #     logging.info("current max depth: %d" % max_depth)
     # params = best_param
 
-    print("调参2：降低过拟合")
-    for max_bin in range(5, 128, 10):
+    logging.info("调参2：降低过拟合")
+    for max_bin in range(28, 128, 10):
         for min_data_in_leaf in range(1, 102, 10):
             params['max_bin'] = max_bin
             params['min_data_in_leaf'] = min_data_in_leaf
             find_best_param(X, y, params)
-        print("current max_bin: ", max_bin)
+        logging.info("current max_bin: %d" % max_bin)
     params = best_param
 
-    # print("调参2.1：降低过拟合")
-    # for min_child_weight in range(1, 50, 2):
+    # logging.info("调参2.1：降低过拟合")
+    # for min_child_weight in range(1, 50, 5):
     #         params['min_child_weight'] = min_child_weight
     #         find_best_param(X, y, params)
     # params = best_param
 
-    # print("调参3：降低过拟合")
+    # logging.info("调参3：降低过拟合")
     # for feature_fraction in [0.6, 0.7, 0.8, 0.9, 1.0]:
     #     for bagging_fraction in [0.6, 0.7, 0.8, 0.9, 1.0]:
     #         for bagging_freq in range(0, 50, 5):
@@ -489,9 +524,10 @@ if __name__ == '__main__':
     #             params['bagging_fraction'] = bagging_fraction
     #             params['bagging_freq'] = bagging_freq
     #             find_best_param(X, y, params)
+    #     logging.info("current feature_fraction: %f" % feature_fraction)
     # params = best_param
     #
-    # print("调参4：降低过拟合")
+    # logging.info("调参4：降低过拟合")
     # for lambda_l1 in [1e-5, 1e-3, 1e-1, 0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0]:
     #     for lambda_l2 in [1e-5, 1e-3, 1e-1, 0.0, 0.1, 0.4, 0.6, 0.7, 0.9, 1.0]:
     #         params['lambda_l1'] = lambda_l1
@@ -499,15 +535,15 @@ if __name__ == '__main__':
     #         find_best_param(X, y, params)
     # params = best_param
     #
-    # print("调参5：降低过拟合2")
+    # logging.info("调参5：降低过拟合2")
     # for min_split_gain in [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
     #     params['min_split_gain'] = min_split_gain
     #     find_best_param(X, y, params)
     # params = best_param
 
-    print("final best param: ", best_param)
-    print("final best score: ", best_score)
+    logging.info("final best param: %s" % best_param)
+    logging.info("final best score: %f" % best_score)
 
     end = datetime.datetime.now()
-    print("end at:", end.strftime('%Y-%m-%d %H:%M:%S'))
-    print("during:%s\n" % str((end - start)).split('.')[0])
+    logging.info("end at: %s" % end.strftime('%Y-%m-%d %H:%M:%S'))
+    logging.info("during:%s\n" % str((end - start)).split('.')[0])
