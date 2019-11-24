@@ -588,7 +588,7 @@ if __name__ == '__main__':
     NN_mean_crps_csv = []
     LGBM_mean_crps_csv = []
 
-    loop = 5
+    loop = 3
     NN_pred = np.zeros((loop, len(y), len(y[0])))
     Lgbm_pred = np.zeros((loop, len(y), len(y[0])))
     for k in range(loop):

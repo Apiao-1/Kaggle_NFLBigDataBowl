@@ -7,6 +7,7 @@ from keras.optimizers import Adam
 from keras.layers import Dense, Input, Dropout
 from keras.models import Model
 from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
+import lightgbm as lgb
 import datetime
 import warnings
 import gc
@@ -267,7 +268,9 @@ def create_features(df, deploy=False):
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: "indoor" if not pd.isna(x) and "indoor" in x else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
-            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party','partly') if not pd.isna(x) else x)
+            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party',
+                                                                                        'partly') if not pd.isna(
+                x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: x.replace('clear and sunny', 'sunny and clear') if not pd.isna(x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
@@ -330,6 +333,7 @@ def create_features(df, deploy=False):
 
     return basetable
 
+
 # tested
 def process_two(t_):
     t_['fe1'] = pd.Series(np.sqrt(np.absolute(np.square(t_.X.values) + np.square(t_.Y.values))))
@@ -375,14 +379,15 @@ class CRPSCallback(Callback):
         if (self.validation):
             X_valid, y_valid = self.validation[0], self.validation[1]
             y_pred = self.model.predict(X_valid)
-            y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
-            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-            val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * X_valid.shape[0])
-            val_s = np.round(val_s, 8)
+            val_s = metric_crps(y_valid, y_pred)
+            # y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
+            # y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+            # val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * X_valid.shape[0])
+            # val_s = np.round(val_s, 8)
             logs['CRPS_score_val'] = val_s
 
 
-def get_model(x_tr, y_tr, x_val, y_val):
+def get_NN_model(x_tr, y_tr, x_val, y_val):
     inp = Input(shape=(x_tr.shape[1],))
     # x = Dense(2048, input_dim=X.shape[1], activation='elu')(inp)
     # x = Dropout(0.5)(x)
@@ -428,43 +433,116 @@ def get_model(x_tr, y_tr, x_val, y_val):
     model.load_weights("best_model.h5")
 
     y_pred = model.predict(x_val)
-    y_valid = y_val
-    y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
-    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-
-    # x_val['Yards_limit']
-
-    # y_0 = np.zeros((len(y_pred), 85))
-    # y_pred = np.concatenate((y_pred, y_0), axis=1)
-    # print(y_pred.shape)
-
-    #     y_pred[y_pred<0.01] = 0.0
-    #     y_pred[y_pred>0.99] = 1.0
-    #     for index,item in enumerate(y_pred):
-    #         if item<0.001:
-    #             y_pred[index] = 0.0
-    #         elif item>0.999:
-    #             y_pred[index] = 1.0
-    #         else:
-    #             y_pred[index] = y_pred[index]
-    val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * x_val.shape[0])
-    crps = np.round(val_s, 8)
+    crps = metric_crps(y_val, y_pred)
+    # crps = np.round(crps, 8)
     gc.collect()
 
     return model, crps
 
 
+def get_LGBM_model(X_train, y_train, X_val, y_val):
+    y_true = y_val
+    y_train = np.argmax(y_train, axis=1)
+    y_val = np.argmax(y_val, axis=1)
+    trn_data = lgb.Dataset(X_train, label=y_train)
+    val_data = lgb.Dataset(X_val, label=y_val)
+
+    params = {
+        # 'n_estimators': 500,
+        'learning_rate': 0.1,
+
+        'num_leaves': 32,  # Original 50
+        'max_depth': 5,
+
+        'min_data_in_leaf': 91,  # min_child_samples
+        'max_bin': 58,
+        'min_child_weight': 7,
+
+        "feature_fraction": 0.8,  # 0.9 colsample_bytree
+        "bagging_freq": 1,
+        "bagging_fraction": 0.8,  # 'subsample'
+        "bagging_seed": 2019,
+
+        'min_split_gain': 0.0,
+        "lambda_l1": 0.8,
+        "lambda_l2": 0.6,
+
+        "boosting": "gbdt",
+        'num_class': classify_type,  # 199 possible places
+        # 'num_class': 199,  # 199 possible places
+        'objective': 'multiclass',
+        "metric": "None",
+        # "metric": "multi_logloss",
+        "verbosity": -1,
+        "seed": 2019,
+    }
+    num_round = 10000
+    model = lgb.train(params, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=False,
+                      early_stopping_rounds=150, feval=crps_eval)
+    y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+    crps = metric_crps(y_true, y_pred)
+    gc.collect()
+    return model, crps
+
+
+def crps_eval(y_pred, dataset, is_higher_better=False):
+    labels = dataset.get_label()
+    y_true = np.zeros((len(labels), classify_type))
+    for i, v in enumerate(labels):
+        y_true[i, int(v):] = 1
+    y_pred = y_pred.reshape(-1, classify_type, order='F')
+    y_pred = np.clip(y_pred.cumsum(axis=1), 0, 1)
+    return 'crps', np.mean((y_pred - y_true) ** 2), False
+
+
+def metric_crps(y_true, y_pred):
+    y_true = np.clip(np.cumsum(y_true, axis=1), 0, 1)
+    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+    return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
+
+
 def predict(x_te):
-    model_num = len(models)
-    for k, m in enumerate(models):
+    pred_NN = predict_single_modle(x_te, NN_models)
+    pred_Lgbm = predict_single_modle(x_te, Lgbm_models)
+
+    return weight_nn * pred_NN + weight_lgbm * pred_Lgbm
+
+
+def predict_single_modle(x_te, model):
+    model_num = len(model)
+    for k, m in enumerate(model):
         if k == 0:
             y_pred = m.predict(x_te, batch_size=1024)
         else:
             y_pred += m.predict(x_te, batch_size=1024)
-
     y_pred = y_pred / model_num
 
     return y_pred
+
+
+def weight_opt(oof_nn, oof_rf, y_true):
+    weight_nn = np.inf
+    best_crps = np.inf
+
+    for i in np.arange(0, 1.01, 0.05):
+        gc.collect()
+
+        crps_blend = np.zeros(oof_nn.shape[0])
+        for k in range(oof_nn.shape[0]):
+            crps_blend[k] = metric_crps(i * oof_nn[k, ...] + (1 - i) * oof_rf[k, ...], y_true)
+        if np.mean(crps_blend) < best_crps:
+            best_crps = np.mean(crps_blend)
+            weight_nn = round(i, 2)
+
+        print(str(round(i, 2)) + ' : mean crps (Blend) is ', round(np.mean(crps_blend), 6))
+
+    print('-' * 36)
+    print('Best weight for NN: ', weight_nn)
+    print('Best weight for LGBM: ', round(1 - weight_nn, 2))
+    #print('Best weight for RF: ', round(1-weight_nn, 2)
+    print('Best mean crps (Blend): ', round(best_crps, 6))
+
+    return weight_nn, round(1 - weight_nn, 2)
 
 
 TRAIN_OFFLINE = False
@@ -484,21 +562,8 @@ if __name__ == '__main__':
     train_basetable = create_features(train, False)
     train_basetable = process_two(train_basetable)
 
-    # drop test
-    # print("before drop feature:", train_basetable.shape)
-    # columns = ['def_max_dist']
-    # columns = ['def_mean_dist']
-    # columns = ['def_std_dist']
-    # columns = ['def_skew_dist']
-    # columns = ['def_medn_dist']
-    # columns = ['def_q80_dist']
-    # columns = ['def_q30_dist']
-    # columns = ['def_kurt_dist']
-
-    # train_basetable.drop(columns=columns, inplace=True)
-    # print("after drop feature:", train_basetable.shape)
-
-    train = train_basetable.loc[(train_basetable['Yards'] >= CLASSIFY_NEGITAVE) & (train_basetable['Yards'] <= CLASSIFY_POSTIVE)]
+    train = train_basetable.loc[
+        (train_basetable['Yards'] >= CLASSIFY_NEGITAVE) & (train_basetable['Yards'] <= CLASSIFY_POSTIVE)]
 
     print("before delete:", train_basetable.shape)
     print("After delete:", train.shape)
@@ -518,65 +583,84 @@ if __name__ == '__main__':
     X = scaler.fit_transform(X)
 
     losses = []
-    models = []
-    mean_crps_csv = []
+    NN_models = []
+    Lgbm_models = []
+    NN_mean_crps_csv = []
+    LGBM_mean_crps_csv = []
 
-    for k in range(7):
-        #     for k in range(5):
-        #         kfold = KFold(5, random_state=42 + k, shuffle=True)
-        kfold = KFold(9, random_state=2019 + 17 * k, shuffle=True)
+    loop = 3
+    NN_pred = np.zeros((loop, len(y), len(y[0])))
+    Lgbm_pred = np.zeros((loop, len(y), len(y[0])))
+    for k in range(loop):
+        kfold = KFold(5, random_state=2019 + 17 * k, shuffle=True)
         j = 0
-        crps_csv = []
+        NN_crps_csv = []
+        Lgbm_crps_csv = []
         for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(yards)):
             j += 1
             if j > 3:
                 break
             tr_x, tr_y = X[tr_inds], y[tr_inds]
             val_x, val_y = X[val_inds], y[val_inds]
-            model, crps = get_model(tr_x, tr_y, val_x, val_y)
-            models.append(model)
-            # print("the %d fold crps is %f" % ((k_fold + 1), crps))
-            crps_csv.append(crps)
-        mean_crps_csv.append(np.mean(crps_csv))
-        print("9 folder crps is %f" % np.mean(crps_csv))
 
-    print("mean crps is %f" % np.mean(mean_crps_csv))
+            # train NN model
+            NN_model, NN_crps = get_NN_model(tr_x, tr_y, val_x, val_y)
+            NN_models.append(NN_model)
+            NN_crps_csv.append(NN_crps)
+            NN_pred[k, val_inds, :] = NN_model.predict(val_x)
 
-    # if TRAIN_OFFLINE == False:
-    #     from kaggle.competitions import nflrush
-    #
-    #     env = nflrush.make_env()
-    #     iter_test = env.iter_test()
-    #
-    #     for (test_df, sample_prediction_df) in iter_test:
-    #         basetable = create_features(test_df, deploy=True)
-    #         basetable = process_two(basetable)
-    #         Yards_limit = basetable['Yards_limit'][0]
-    #
-    #         basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-    #         scaled_basetable = scaler.transform(basetable)
-    #
-    #         y_pred = predict(scaled_basetable)
-    #         y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-    #
-    #         y_0 = np.zeros((len(y_pred), 99 + CLASSIFY_NEGITAVE))
-    #         y_pred = np.concatenate((y_0, y_pred), axis=1)
-    #         y_1 = np.ones((len(y_pred), 99 - CLASSIFY_POSTIVE))
-    #         y_pred = np.concatenate((y_pred, y_1), axis=1)
-    #
-    #         y_pred[:, (99 + int(Yards_limit)):] = 1
-    #         # print(99 + int(Yards_limit))
-    #
-    #         # print(type(y_pred),len(y_pred))
-    #         #         for index,item in enumerate(y_pred):
-    #         #             if item<0.01:
-    #         #                 y_pred[index] = 0.0
-    #         #             elif item>0.99:
-    #         #                 y_pred[index] = 1.0
-    #         #             else:
-    #         #                 y_pred[index] = y_pred[index]
-    #
-    #         preds_df = pd.DataFrame(data=y_pred, columns=sample_prediction_df.columns)
-    #         env.predict(preds_df)
-    #
-    #     env.write_submission_file()
+            # train lgbm model
+            Lgbm_model, Lgbm_crps = get_LGBM_model(tr_x, tr_y, val_x, val_y)
+            Lgbm_models.append(Lgbm_model)
+            Lgbm_crps_csv.append(Lgbm_crps)
+            Lgbm_pred[k, val_inds, :] = Lgbm_model.predict(val_x, num_iteration=Lgbm_model.best_iteration)
+
+        NN_mean_crps_csv.append(np.mean(NN_crps_csv))
+        print("9 folder NN crps is %f" % np.mean(NN_crps_csv))
+        LGBM_mean_crps_csv.append(np.mean(Lgbm_crps_csv))
+        print("9 folder LGBM crps is %f" % np.mean(Lgbm_crps_csv))
+
+    print("total mean NN crps is %f" % np.mean(NN_mean_crps_csv))
+    print("total mean LGBM crps is %f" % np.mean(LGBM_mean_crps_csv))
+
+    # get blend weight
+    weight_nn, weight_lgbm = weight_opt(NN_pred, Lgbm_pred, y)
+
+    if TRAIN_OFFLINE == False:
+        from kaggle.competitions import nflrush
+
+        env = nflrush.make_env()
+        iter_test = env.iter_test()
+
+        for (test_df, sample_prediction_df) in iter_test:
+            basetable = create_features(test_df, deploy=True)
+            basetable = process_two(basetable)
+            Yards_limit = basetable['Yards_limit'][0]
+
+            basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+            scaled_basetable = scaler.transform(basetable)
+
+            y_pred = predict(scaled_basetable)
+            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+
+            y_0 = np.zeros((len(y_pred), 99 + CLASSIFY_NEGITAVE))
+            y_pred = np.concatenate((y_0, y_pred), axis=1)
+            y_1 = np.ones((len(y_pred), 99 - CLASSIFY_POSTIVE))
+            y_pred = np.concatenate((y_pred, y_1), axis=1)
+
+            y_pred[:, (99 + int(Yards_limit)):] = 1
+            # print(99 + int(Yards_limit))
+
+            # print(type(y_pred),len(y_pred))
+            #         for index,item in enumerate(y_pred):
+            #             if item<0.01:
+            #                 y_pred[index] = 0.0
+            #             elif item>0.99:
+            #                 y_pred[index] = 1.0
+            #             else:
+            #                 y_pred[index] = y_pred[index]
+
+            preds_df = pd.DataFrame(data=y_pred, columns=sample_prediction_df.columns)
+            env.predict(preds_df)
+
+        env.write_submission_file()
