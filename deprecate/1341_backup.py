@@ -1,38 +1,21 @@
-import os
-
-TRAIN_ABLE_FALSE = True
-if TRAIN_ABLE_FALSE:
-    os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split, KFold
-import time
-from keras.layers import Dense, Input, Flatten, concatenate, Dropout, Lambda, BatchNormalization, Activation
+from sklearn.model_selection import KFold, train_test_split
+from keras.layers import BatchNormalization
 from keras.optimizers import Adam
-import datetime
-from keras.layers import Dense, Input, Flatten, concatenate, Dropout, Lambda
+from keras.layers import Dense, Input, Dropout
 from keras.models import Model
 from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
+import datetime
 import warnings
+import gc
 
 warnings.filterwarnings("ignore")
 
-pd.set_option('display.max_columns', 50)
+pd.set_option('display.max_columns', 200)
 pd.set_option('display.max_rows', 150)
-
-
-def strtoseconds(txt):
-    txt = txt.split(':')
-    ans = int(txt[0]) * 60 + int(txt[1]) + int(txt[2]) / 60
-    return ans
-
-
-def strtofloat(x):
-    try:
-        return float(x)
-    except:
-        return -1
+pd.set_option('max_colwidth',200)
 
 
 def map_weather(txt):
@@ -56,28 +39,13 @@ def map_weather(txt):
     return 0
 
 
-def OffensePersonnelSplit(x):
-    dic = {'DB': 0, 'DL': 0, 'LB': 0, 'OL': 0, 'QB': 0, 'RB': 0, 'TE': 0, 'WR': 0}
-    for xx in x.split(","):
-        xxs = xx.split(" ")
-        dic[xxs[-1]] = int(xxs[-2])
-    return dic
-
-
-def DefensePersonnelSplit(x):
-    dic = {'DB': 0, 'DL': 0, 'LB': 0, 'OL': 0}
-    for xx in x.split(","):
-        xxs = xx.split(" ")
-        dic[xxs[-1]] = int(xxs[-2])
-    return dic
-
-
 def orientation_to_cat(x):
     x = np.clip(x, 0, 360 - 1)
     try:
         return str(int(x / 15))
     except:
         return "nan"
+
 
 def create_features(df, deploy=False):
     def new_X(x_coordinate, play_direction):
@@ -88,7 +56,7 @@ def create_features(df, deploy=False):
 
     def new_Y(y_coordinate, play_direction):
         if play_direction == 'left':
-            return 160.0/3 - y_coordinate
+            return 160.0 / 3 - y_coordinate
         else:
             return y_coordinate
 
@@ -139,7 +107,7 @@ def create_features(df, deploy=False):
         new_yardline['YardLine'] = new_yardline[['PossessionTeam', 'FieldPosition', 'YardLine']].apply(
             lambda x: new_line(x[0], x[1], x[2]), axis=1)
         new_yardline['Yards_limit'] = 110 - new_yardline['YardLine']
-        new_yardline = new_yardline[['GameId', 'PlayId', 'YardLine','Yards_limit']]
+        new_yardline = new_yardline[['GameId', 'PlayId', 'YardLine', 'Yards_limit']]
 
         return new_yardline
 
@@ -164,7 +132,7 @@ def create_features(df, deploy=False):
                                             'Y': 'back_Y'})
         carriers = carriers[
             ['GameId', 'PlayId', 'NflIdRusher', 'back_X', 'back_Y', 'back_from_scrimmage'
-                , 'back_oriented_down_field','back_moving_down_field'
+                , 'back_oriented_down_field', 'back_moving_down_field'
              ]]
 
         return carriers
@@ -187,10 +155,10 @@ def create_features(df, deploy=False):
             .reset_index()
 
         player_distance.columns = ['GameId', 'PlayId', 'back_from_scrimmage',
-                                   'back_oriented_down_field','back_moving_down_field',
+                                   'back_oriented_down_field', 'back_moving_down_field',
                                    'min_dist', 'max_dist', 'mean_dist', 'std_dist', 'skew_dist', 'medn_dist',
                                    'q80_dist', 'q30_dist', 'kurt_dist', 'mad_dist', 'ptp_dist',
-                                   'X_mean','X_std',]
+                                   'X_mean', 'X_std', ]
 
         return player_distance
 
@@ -206,13 +174,14 @@ def create_features(df, deploy=False):
         defense_d = defense_d.groupby(['GameId', 'PlayId']) \
             .agg({'def_dist_to_back': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,
                                        'mad', np.ptp],
-                  'X': ['mean', 'std','skew', 'median', q80, q30, pd.DataFrame.kurt,'mad', np.ptp],
+                  'X': ['mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp],
                   }) \
             .reset_index()
         defense_d.columns = ['GameId', 'PlayId', 'def_min_dist', 'def_max_dist', 'def_mean_dist', 'def_std_dist',
                              'def_skew_dist', 'def_medn_dist', 'def_q80_dist', 'def_q30_dist', 'def_kurt_dist',
                              'def_mad_dist', 'def_ptp_dist',
-                             'def_X_mean','def_X_std','def_X_skew', 'def_X_median', 'def_X_q80', 'def_X_q30', 'def_X_kurt', 'def_X_mad', 'def_X_ptp']
+                             'def_X_mean', 'def_X_std', 'def_X_skew', 'def_X_median', 'def_X_q80', 'def_X_q30',
+                             'def_X_kurt', 'def_X_mad', 'def_X_ptp']
 
         defense_s = defense[defense['Team'] != defense['RusherTeam']][['GameId', 'PlayId', 'S', 'A']]
         defense_s['SA'] = defense_s[['S', 'A']].apply(lambda x: x[0] + x[1], axis=1)
@@ -227,7 +196,7 @@ def create_features(df, deploy=False):
                              'def_min_a', 'def_max_a', 'def_mean_a', 'def_std_a', 'def_skew_a', 'def_medn_a',
                              'def_q80_a', 'def_q30_a', 'def_kurt_a', 'def_mad_a', 'def_ptp_a', 'def_min_sa',
                              'def_max_sa', 'def_mean_sa', 'def_std_sa', 'def_skew_sa', 'def_medn_sa', 'def_q80_sa',
-                             'def_q30_sa', 'def_kurt_sa', 'def_mad_sa', 'def_ptp_sa',]
+                             'def_q30_sa', 'def_kurt_sa', 'def_mad_sa', 'def_ptp_sa', ]
 
         defense = pd.merge(defense_d, defense_s, on=['GameId', 'PlayId'], how='inner')
 
@@ -246,7 +215,7 @@ def create_features(df, deploy=False):
             .agg({'def_dist_to_back': [
             'min',
             'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,
-                                       'mad', np.ptp]}) \
+            'mad', np.ptp]}) \
             .reset_index()
         team_d.columns = ['GameId', 'PlayId',
                           'tm_min_dist',
@@ -271,6 +240,7 @@ def create_features(df, deploy=False):
 
         return team
 
+    # tested
     def static_features(df):
 
         add_new_feas = []
@@ -293,49 +263,19 @@ def create_features(df, deploy=False):
             lambda row: (row['TimeHandoff'] - row['PlayerBirthDate']).total_seconds() / seconds_in_year, axis=1)
         add_new_feas.append('PlayerAge')
 
-        ## WindSpeed
-        # df['WindSpeed_ob'] = df['WindSpeed'].apply(
-        #     lambda x: x.lower().replace('mph', '').strip() if not pd.isna(x) else x)
-        # df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
-        #     lambda x: (int(x.split('-')[0]) + int(x.split('-')[1])) / 2 if not pd.isna(x) and '-' in x else x)
-        # df['WindSpeed_ob'] = df['WindSpeed_ob'].apply(
-        #     lambda x: (int(x.split()[0]) + int(x.split()[-1])) / 2 if not pd.isna(x) and type(
-        #         x) != float and 'gusts up to' in x else x)
-        # df['WindSpeed_dense'] = df['WindSpeed_ob'].apply(strtofloat)
-        # add_new_feas.append('WindSpeed_dense')
-
         ## Weather
         df['GameWeather_process'] = df['GameWeather'].str.lower()
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: "indoor" if not pd.isna(x) and "indoor" in x else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
-            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party',
-                                                                                        'partly') if not pd.isna(
-                x) else x)
+            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party','partly') if not pd.isna(x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: x.replace('clear and sunny', 'sunny and clear') if not pd.isna(x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: x.replace('skies', '').replace("mostly", "").strip() if not pd.isna(x) else x)
         df['GameWeather_dense'] = df['GameWeather_process'].apply(map_weather)
         add_new_feas.append('GameWeather_dense')
-        #         ## Rusher
-        #         train['IsRusher'] = (train['NflId'] == train['NflIdRusher'])
-        #         train['IsRusher_ob'] = (train['NflId'] == train['NflIdRusher']).astype("object")
-        #         temp = train[train["IsRusher"]][["Team", "PlayId"]].rename(columns={"Team":"RusherTeam"})
-        #         train = train.merge(temp, on = "PlayId")
-        #         train["IsRusherTeam"] = train["Team"] == train["RusherTeam"]
 
-        ## dense -> categorical
-        #         train["Quarter_ob"] = train["Quarter"].astype("object")
-        #         train["Down_ob"] = train["Down"].astype("object")
-        #         train["JerseyNumber_ob"] = train["JerseyNumber"].astype("object")
-        #         train["YardLine_ob"] = train["YardLine"].astype("object")
-        # train["DefendersInTheBox_ob"] = train["DefendersInTheBox"].astype("object")
-        # train["Week_ob"] = train["Week"].astype("object")
-        # train["TimeDelta_ob"] = train["TimeDelta"].astype("object")
-
-        ## Orientation and Dir
-        # df["Orientation_ob"] = df["Orientation"].apply(lambda x: orientation_to_cat(x)).astype("object")
         df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
         add_new_feas.append("Dir_ob")
 
@@ -357,20 +297,12 @@ def create_features(df, deploy=False):
         df["diffScoreBeforePlay"] = df["HomeScoreBeforePlay"] - df["VisitorScoreBeforePlay"]
         add_new_feas.append("diffScoreBeforePlay")
 
-        #         df["nextS"] = df["S"] + df["A"]
-        #         df["Sv"] = df["S"] * df["Dir_sin"]
-        #         df["Sh"] = df["S"] * df["Dir_cos"]
-        #         df["Av"] = df["A"] * df["Dir_sin"]
-        #         df["Ah"] = df["A"] * df["Dir_cos"]
-        #         add_new_feas = add_new_feas+["nextS","Sv","Sh","Av","Ah"]
-
         static_features = df[df['NflId'] == df['NflIdRusher']][
             add_new_feas + ['GameId', 'PlayId', 'X', 'Y', 'S', 'A', 'Dis', 'Orientation', 'Dir',
-                            'YardLine','Yards_limit', 'Quarter', 'Down', 'Distance', 'DefendersInTheBox']].drop_duplicates()
-        #         static_features['DefendersInTheBox'] = static_features['DefendersInTheBox'].fillna(np.mean(static_features['DefendersInTheBox']))
+                            'YardLine', 'Yards_limit', 'Quarter', 'Down', 'Distance',
+                            'DefendersInTheBox']].drop_duplicates()
+
         static_features.fillna(0, inplace=True)
-        #         for i in add_new_feas:
-        #             static_features[i] = static_features[i].fillna(np.mean(static_features[i]))
 
         return static_features
 
@@ -378,21 +310,6 @@ def create_features(df, deploy=False):
         df = pd.merge(relative_to_back, defense, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, team, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, static, on=['GameId', 'PlayId'], how='inner')
-
-        #         #differnce
-        #         dft = pd.merge(defense,team,on=['GameId','PlayId'],how='inner')
-        #         deflist = defense.columns.tolist()
-        #         deflist.remove('GameId')
-        #         deflist.remove('PlayId')
-        #         teamlist = team.columns.tolist()
-        #         teamlist.remove('GameId')
-        #         teamlist.remove('PlayId')
-        #         dft[deflist] = dft[teamlist].values-dft[deflist].values
-        #         dft.drop(teamlist,axis=1,inplace=True)
-        #         deflist = [i+'_diff' for i in deflist]
-        #         dft.columns = ['GameId','PlayId']+deflist
-
-        #         df = pd.merge(df,dft,on=['GameId','PlayId'],how='inner')
 
         if not deploy:
             df = pd.merge(df, outcomes, on=['GameId', 'PlayId'], how='inner')
@@ -414,7 +331,7 @@ def create_features(df, deploy=False):
 
     return basetable
 
-
+# tested
 def process_two(t_):
     t_['fe1'] = pd.Series(np.sqrt(np.absolute(np.square(t_.X.values) + np.square(t_.Y.values))))
     t_['fe5'] = np.square(t_['S'].values) + 2 * t_['A'].values * t_['Dis'].values  # N
@@ -494,15 +411,12 @@ def get_model(x_tr, y_tr, x_val, y_val):
     model = Model(inp, out)
     optadam = Adam(lr=0.001)
     model.compile(optimizer=optadam, loss='categorical_crossentropy', metrics=[])
-    # add lookahead
-    #     lookahead = Lookahead(k=5, alpha=0.5) # Initialize Lookahead
-    #     lookahead.inject(model) # add into model
 
     es = EarlyStopping(monitor='CRPS_score_val',
                        mode='min',
                        restore_best_weights=True,
                        verbose=False,
-                       patience=60)
+                       patience=80)
 
     mc = ModelCheckpoint('best_model.h5', monitor='CRPS_score_val', mode='min',
                          save_best_only=True, verbose=False, save_weights_only=True)
@@ -536,6 +450,7 @@ def get_model(x_tr, y_tr, x_val, y_val):
     #             y_pred[index] = y_pred[index]
     val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * x_val.shape[0])
     crps = np.round(val_s, 8)
+    gc.collect()
 
     return model, crps
 
@@ -555,7 +470,7 @@ def predict(x_te):
 
 TRAIN_OFFLINE = False
 CLASSIFY_NEGITAVE = -14  # must < 0
-CLASSIFY_POSTIVE = 99 # 99， 75，53， 36
+CLASSIFY_POSTIVE = 99  # 99， 75，53， 36
 classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
 
 if __name__ == '__main__':
@@ -563,18 +478,18 @@ if __name__ == '__main__':
         train = pd.read_csv('../input/train.csv', dtype={'WindSpeed': 'object'})
     else:
         train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+        # train.loc[train['Season'] == 2017, 'S'] = (train['S'][train['Season'] == 2017] - 2.4355) / 1.2930 * 1.4551 + 2.7570
 
     outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
 
     train_basetable = create_features(train, False)
-
     train_basetable = process_two(train_basetable)
     train = train_basetable.loc[(train_basetable['Yards'] >= CLASSIFY_NEGITAVE) & (train_basetable['Yards'] <= CLASSIFY_POSTIVE)]
 
     print("before delete:", train_basetable.shape)
     print("After delete:", train.shape)
     # print(train.head())
-    X = train.copy()
+    X = train
     yards = X.Yards
 
     # y = np.zeros((yards.shape[0], 199))
@@ -593,8 +508,8 @@ if __name__ == '__main__':
     mean_crps_csv = []
 
     for k in range(7):
-#     for k in range(5):
-#         kfold = KFold(5, random_state=42 + k, shuffle=True)
+        #     for k in range(5):
+        #         kfold = KFold(5, random_state=42 + k, shuffle=True)
         kfold = KFold(9, random_state=2019 + 17 * k, shuffle=True)
         j = 0
         crps_csv = []
