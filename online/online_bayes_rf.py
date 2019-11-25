@@ -1,22 +1,21 @@
+# https://www.kaggle.com/enzoamp/nfl-lightgbm/code
+import sys
+
+sys.path.append('/home/aistudio/external-libraries')
 import numpy as np
+from sklearn.ensemble import RandomForestRegressor
 import pandas as pd
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import KFold
-from keras.layers import BatchNormalization
-from keras.optimizers import Adam
-from keras.layers import Dense, Input, Dropout
-from keras.models import Model
-from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
 import datetime
 import warnings
-import gc
-from sklearn.ensemble import RandomForestRegressor
+from bayes_opt import BayesianOptimization
+import os
 
 warnings.filterwarnings("ignore")
 
-pd.set_option('display.max_columns', 200)
+pd.set_option('display.max_columns', 50)
 pd.set_option('display.max_rows', 150)
-pd.set_option('max_colwidth',200)
 
 
 def map_weather(txt):
@@ -241,7 +240,6 @@ def create_features(df, deploy=False):
 
         return team
 
-    # tested
     def static_features(df):
 
         add_new_feas = []
@@ -269,7 +267,9 @@ def create_features(df, deploy=False):
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: "indoor" if not pd.isna(x) and "indoor" in x else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
-            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party','partly') if not pd.isna(x) else x)
+            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party',
+                                                                                        'partly') if not pd.isna(
+                x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: x.replace('clear and sunny', 'sunny and clear') if not pd.isna(x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
@@ -328,11 +328,11 @@ def create_features(df, deploy=False):
     static_feats = static_features(df)
     basetable = combine_features(rel_back, def_feats, tm_feats, static_feats, deploy=deploy)
 
-    # print(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
+    # logging.info(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
 
     return basetable
 
-# tested
+
 def process_two(t_):
     t_['fe1'] = pd.Series(np.sqrt(np.absolute(np.square(t_.X.values) + np.square(t_.Y.values))))
     t_['fe5'] = np.square(t_['S'].values) + 2 * t_['A'].values * t_['Dis'].values  # N
@@ -349,17 +349,10 @@ def process_two(t_):
     t_["diff_ang"] = t_["Dir"] - t_["Orientation"]
     return t_
 
-def predict(x_te):
-    model_num = len(models)
-    for k, m in enumerate(models):
-        if k == 0:
-            y_pred = m.predict(x_te, batch_size=1024)
-        else:
-            y_pred += m.predict(x_te, batch_size=1024)
 
-    y_pred = y_pred / model_num
+best_score = 9999
+best_param = {}
 
-    return y_pred
 
 def metric_crps(y_true, y_pred):
     y_true = np.clip(np.cumsum(y_true, axis=1), 0, 1)
@@ -367,66 +360,167 @@ def metric_crps(y_true, y_pred):
     return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
 
 
-TRAIN_OFFLINE = False
+def crps_eval(y_pred, dataset, is_higher_better=False):
+    labels = dataset.get_label()
+    y_true = np.zeros((len(labels), classify_type))
+    for i, v in enumerate(labels):
+        y_true[i, int(v):] = 1
+    y_pred = y_pred.reshape(-1, classify_type, order='F')
+    y_pred = np.clip(y_pred.cumsum(axis=1), 0, 1)
+    return 'crps', np.mean((y_pred - y_true) ** 2), False
+
+
+def BayesianSearch(clf, params):
+    """贝叶斯优化器"""
+    # 迭代次数
+    num_iter = 25
+    init_points = 5
+    # 创建一个贝叶斯优化对象，输入为自定义的模型评估函数与超参数的范围
+    bayes = BayesianOptimization(clf, params)
+    # 开始优化
+    bayes.maximize(init_points=init_points, n_iter=num_iter)
+    # 输出结果
+    params = bayes.res['max']
+    logging.info(params['max_params'])
+
+    return params
+
+
+def RF_evaluate(n_estimators, min_samples_split, max_features, max_depth, min_samples_leaf):
+    """自定义的模型评估函数"""
+
+    # 模型固定的超参数
+    param = {
+        'n_estimators': 200,
+        'min_samples_split': 5,
+        'min_samples_leaf': 13,
+        'max_features': 0.8,
+        'max_depth': 8,
+
+        # 'bootstrap': False,
+        # 'verbose':1,
+        'criterion': 'mae',
+        'random_state': 2019
+    }
+    find_best_param(X, y, param)
+
+
+    # 贝叶斯优化器生成的超参数
+    param['n_estimators'] = int(n_estimators)
+    param['min_samples_split'] = int(min_samples_split),
+    param['max_depth'] = int(max_depth),
+    param['min_samples_leaf'] = int(min_samples_leaf),
+    param['max_features'] = float(max_features),
+
+
+    # 5-flod 交叉检验，注意BayesianOptimization会向最大评估值的方向优化，因此对于回归任务需要取负数。
+    # 这里的评估函数为neg_mean_squared_error，即负的MSE。
+    val = -find_best_param(X, y, param)
+
+    return val
+
+def find_best_param(X, y, params):
+    kf = KFold(n_splits=5, random_state=2019)
+    score = []
+    for i, (tdx, vdx) in enumerate(kf.split(X, y)):
+        X_train, X_val, y_train, y_val = X[tdx], X[vdx], y[tdx], y[vdx]
+        y_true = y_val.copy()
+        clf = RandomForestRegressor().set_params(**params)
+        logging.info("fit begin")
+        print(X.shape, y.shape)
+        print(X_train.shape, y_train.shape)
+        print("fit begin")
+        model = clf.fit(X_train, y_train)
+        logging.info("fit end")
+        y_pred = model.predict(X_val)
+        score_ = metric_crps(y_true, y_pred)
+        score.append(score_)
+    mean_score = np.mean(score)
+    logging.info("mean_score: %f" % mean_score)
+    global best_score, best_param
+    if mean_score <= best_score:
+        best_score = mean_score
+        logging.info("update best_score: %f" % best_score)
+        best_param = params
+        logging.info("update best params: %s" % best_param)
+    return mean_score
+
+
+import logging
+from logging.handlers import TimedRotatingFileHandler
+import re
+
+
+def init_log():
+    logging.getLogger('bloomfilter').setLevel('WARN')
+    log_file_handler = TimedRotatingFileHandler(filename="bloomfilter.log", when="D", interval=1, backupCount=7)
+    log_file_handler.suffix = "%Y-%m-%d"
+    log_file_handler.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    log_fmt = '%(asctime)s - %(name)s - %(levelname)s- %(filename)s:%(lineno)s - %(threadName)s - %(message)s'
+    formatter = logging.Formatter(log_fmt)
+    log_file_handler.setFormatter(formatter)
+    logging.getLogger().setLevel(logging.INFO)
+    logging.getLogger().addHandler(log_file_handler)
+
+
+TRAIN_OFFLINE = True
 CLASSIFY_NEGITAVE = -14  # must < 0
 CLASSIFY_POSTIVE = 99  # 99， 75，53， 36
 classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
+X, y = None, None
 
 if __name__ == '__main__':
+    init_log()
+    # sys.stdout = open('start.log', 'w')
+
+    start = datetime.datetime.now()
+    logging.info("start at: %s" % start.strftime('%Y-%m-%d %H:%M:%S'))
+
+    path = '/Users/a_piao/PycharmProjects/my_competition/NFLBigDataBowl/cache_feature.csv'
+
     if TRAIN_OFFLINE:
-        train = pd.read_csv('../input/train.csv', dtype={'WindSpeed': 'object'})
+        if os.path.exists(path):
+            train_basetable = pd.read_csv(path)
+        else:
+            train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
+            outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+            train_basetable = create_features(train, False)
+            train_basetable = process_two(train_basetable)
+            train_basetable.to_csv(path, index=False)
     else:
-        train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
-        # train.loc[train['Season'] == 2017, 'S'] = (train['S'][train['Season'] == 2017] - 2.4355) / 1.2930 * 1.4551 + 2.7570
+        # train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
+        # train = pd.read_csv('/home/aistudio/data/data16525/train.csv', dtype={'WindSpeed': 'object'})  # 163
+        train = pd.read_csv('/home/aistudio/data/data16375/train.csv', dtype={'WindSpeed': 'object'}) #phone
+        logging.info(train.shape)
+        outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+        train_basetable = create_features(train, False)
+        train_basetable = process_two(train_basetable)
 
-    outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
-
-    train_basetable = create_features(train, False)
-    train_basetable = process_two(train_basetable)
-
-    train = train_basetable.loc[(train_basetable['Yards'] >= CLASSIFY_NEGITAVE) & (train_basetable['Yards'] <= CLASSIFY_POSTIVE)]
-
-    print("before delete:", train_basetable.shape)
-    print("After delete:", train.shape)
-    # print(train.head())
-    X = train
+    X = train_basetable
     yards = X.Yards
-
-    # y = np.zeros((yards.shape[0], 199))
     y = np.zeros((yards.shape[0], classify_type))
     for idx, target in enumerate(list(yards)):
-        # y[idx][99 + target] = 1
         y[idx][-CLASSIFY_NEGITAVE + target] = 1
-
     X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
-    losses = []
-    models = []
-    mean_crps_csv = []
+    # 调参范围
+    adj_params = {
+        'n_estimators': (10, 550),
+        'min_samples_split': (2, 25),
+        'min_samples_leaf': (2, 100),
+        'max_features': (0.1, 0.999),
+        'max_depth': (4, 14)
+    }
 
-    for k in range(1):
-        #     for k in range(5):
-        #         kfold = KFold(5, random_state=42 + k, shuffle=True)
-        kfold = KFold(5, random_state=2019 + 17 * k, shuffle=True)
-        j = 0
-        crps_csv = []
-        for k_fold, (tr_inds, val_inds) in enumerate(kfold.split(yards)):
-            # j += 1
-            # if j > 3:
-            #     break
-            tr_x, tr_y = X[tr_inds], y[tr_inds]
-            val_x, val_y = X[val_inds], y[val_inds]
-            model = RandomForestRegressor(bootstrap=False, max_features=0.3, min_samples_leaf=15, min_samples_split=7,
-                                          n_estimators=250, n_jobs=-1, random_state=2019)
-            model.fit(tr_x, tr_y)
-            y_pred = model.predict(val_x)
-            crps = metric_crps(val_y, y_pred)
-            models.append(model)
-            crps_csv.append(crps)
-        mean_crps_csv.append(np.mean(crps_csv))
-        print("9 folder crps is %f" % np.mean(crps_csv))
+    # 调用贝叶斯优化
+    BayesianSearch(RF_evaluate, adj_params)
 
-    print("mean crps is %f" % np.mean(mean_crps_csv))
+    logging.info("final best param: %s" % best_param)
+    logging.info("final best score: %f" % best_score)
+
+    end = datetime.datetime.now()
+    logging.info("end at: %s" % end.strftime('%Y-%m-%d %H:%M:%S'))
+    logging.info("during:%s\n" % str((end - start)).split('.')[0])
