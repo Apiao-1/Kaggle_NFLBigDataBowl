@@ -386,7 +386,7 @@ def BayesianSearch(clf, params):
     return params
 
 
-def RF_evaluate(n_estimators, min_samples_split, max_features, max_depth, min_samples_leaf):
+def RF_evaluate(n_estimators, min_samples_split, min_samples_leaf, max_features, max_depth):
     """自定义的模型评估函数"""
 
     # 模型固定的超参数
@@ -394,7 +394,7 @@ def RF_evaluate(n_estimators, min_samples_split, max_features, max_depth, min_sa
         'n_estimators': 200,
         'min_samples_split': 5,
         'min_samples_leaf': 13,
-        'max_features': 0.8,
+        'max_features': 0.3,
         'max_depth': 8,
 
         # 'bootstrap': False,
@@ -404,14 +404,12 @@ def RF_evaluate(n_estimators, min_samples_split, max_features, max_depth, min_sa
     }
     find_best_param(X, y, param)
 
-
     # 贝叶斯优化器生成的超参数
     param['n_estimators'] = int(n_estimators)
-    param['min_samples_split'] = int(min_samples_split),
-    param['max_depth'] = int(max_depth),
-    param['min_samples_leaf'] = int(min_samples_leaf),
-    param['max_features'] = float(max_features),
-
+    param['min_samples_split'] = int(min_samples_split)
+    param['max_depth'] = int(max_depth)
+    param['min_samples_leaf'] = int(min_samples_leaf)
+    param['max_features'] = float(max_features)
 
     # 5-flod 交叉检验，注意BayesianOptimization会向最大评估值的方向优化，因此对于回归任务需要取负数。
     # 这里的评估函数为neg_mean_squared_error，即负的MSE。
@@ -463,7 +461,7 @@ def init_log():
     logging.getLogger().addHandler(log_file_handler)
 
 
-TRAIN_OFFLINE = True
+TRAIN_OFFLINE = False
 CLASSIFY_NEGITAVE = -14  # must < 0
 CLASSIFY_POSTIVE = 99  # 99， 75，53， 36
 classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
@@ -480,7 +478,7 @@ if __name__ == '__main__':
 
     if TRAIN_OFFLINE:
         if os.path.exists(path):
-            train_basetable = pd.read_csv(path)
+            train_basetable = pd.read_csv(path)[:220]
         else:
             train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
             outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
@@ -511,7 +509,7 @@ if __name__ == '__main__':
         'n_estimators': (10, 550),
         'min_samples_split': (2, 25),
         'min_samples_leaf': (2, 100),
-        'max_features': (0.1, 0.999),
+        'max_features': (0.1, 1),
         'max_depth': (4, 14)
     }
 
