@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler,OneHotEncoder
 from sklearn.model_selection import KFold, train_test_split
 from keras.layers import BatchNormalization
 from keras.optimizers import Adam
@@ -16,7 +16,7 @@ sns.set()
 
 warnings.filterwarnings("ignore")
 
-pd.set_option('display.max_columns', 200)
+pd.set_option('display.max_columns', 250)
 pd.set_option('display.max_rows', 150)
 pd.set_option('max_colwidth',200)
 
@@ -40,6 +40,28 @@ def map_weather(txt):
     if 'snow' in txt:
         return -3 * ans
     return 0
+
+def map_strategy(txt):
+    if pd.isna(txt):
+        return 0
+    if txt == 'SINGLEBACK':
+        return 1
+    if txt == 'SHOTGUN':
+        return 2
+    if txt == 'I_FORM':
+        return 3
+    if txt == 'PISTOL':
+        return 4
+    if txt == 'JUMBO':
+        return 5
+    if txt == 'WILDCAT':
+        return 6
+    if txt == 'ACE':
+        return 7
+    if txt == 'EMPTY':
+        return 8
+    return 0
+
 
 
 def orientation_to_cat(x):
@@ -279,8 +301,8 @@ def create_features(df, deploy=False):
         df['GameWeather_dense'] = df['GameWeather_process'].apply(map_weather)
         add_new_feas.append('GameWeather_dense')
 
-        df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
-        add_new_feas.append("Dir_ob")
+        # df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
+        # add_new_feas.append("Dir_ob")
 
         df["Orientation_sin"] = df["Orientation"].apply(lambda x: np.sin(x / 360 * 2 * np.pi))
         df["Orientation_cos"] = df["Orientation"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
@@ -309,10 +331,215 @@ def create_features(df, deploy=False):
 
         return static_features
 
-    def combine_features(relative_to_back, defense, team, static, deploy=deploy):
+    def naodong_feat(train, deploy=deploy):
+        # outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+
+        train['VisitorTeamAbbr'].replace('ARI', 'ARZ', inplace=True)
+        train['HomeTeamAbbr'].replace('ARI', 'ARZ', inplace=True)
+        train['VisitorTeamAbbr'].replace('BAL', 'BLT', inplace=True)
+        train['HomeTeamAbbr'].replace('BAL', 'BLT', inplace=True)
+        train['VisitorTeamAbbr'].replace('CLE', 'CLV', inplace=True)
+        train['HomeTeamAbbr'].replace('CLE', 'CLV', inplace=True)
+        train['VisitorTeamAbbr'].replace('HOU', 'HST', inplace=True)
+        train['HomeTeamAbbr'].replace('HOU', 'HST', inplace=True)
+
+        # 球队名称
+        def get_player_team(df):
+            if df['Team'] == 'home':
+                return df['HomeTeamAbbr']
+            else:
+                return df['VisitorTeamAbbr']
+
+        train['player_team'] = train.apply(get_player_team, axis=1)
+
+        group = train.groupby(['GameId', 'PlayId'])
+
+        # 发球线
+        def get_blue_line(a):
+            k = a.iloc[0]
+
+            if k['PlayDirection'] == 'left':
+                if k['PossessionTeam'] != k['FieldPosition']:
+                    lines = k['YardLine'] + 10
+                else:
+                    lines = 110 - k['YardLine']
+                d_line = lines - k['Distance']
+            else:
+                if k['PossessionTeam'] != k['FieldPosition']:
+                    lines = 110 - k['YardLine']
+                else:
+                    lines = k['YardLine'] + 10
+                d_line = lines + k['Distance']
+            return lines
+
+        def get_green_line(a):
+            k = a.iloc[0]
+
+            if k['PlayDirection'] == 'left':
+                if k['PossessionTeam'] != k['FieldPosition']:
+                    lines = k['YardLine'] + 10
+                else:
+                    lines = 110 - k['YardLine']
+                d_line = lines - k['Distance']
+            else:
+                if k['PossessionTeam'] != k['FieldPosition']:
+                    lines = 110 - k['YardLine']
+                else:
+                    lines = k['YardLine'] + 10
+                d_line = lines + k['Distance']
+            return d_line
+
+        # outcomes2 = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+        # outcomes_final = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+
+        outcomes2 = train[['GameId', 'PlayId']].drop_duplicates()
+        outcomes_final = train[['GameId', 'PlayId']].drop_duplicates()
+
+        outcomes2 = outcomes2.merge(group.apply(get_blue_line).rename('blue_line').reset_index(),
+                                    on=['GameId', 'PlayId'])
+
+        outcomes2 = outcomes2.merge(group.apply(get_green_line).rename('green_line').reset_index(),
+                                    on=['GameId', 'PlayId'])
+
+        # 持球人X
+        outcomes2['rusher_X'] = group.apply(lambda s: s[s['NflId'] == s['NflIdRusher']]['X'].iloc[0]).values
+
+        # 持球人和两条线的距离
+        outcomes2['rusher_X-green_line'] = outcomes2['rusher_X'] - outcomes2['green_line']
+
+        outcomes2['rusher_X-green_line'] = outcomes2['rusher_X-green_line'].abs()
+
+        outcomes2['rusher_X-blue_line'] = outcomes2['rusher_X'] - outcomes2['blue_line']
+
+        outcomes2['rusher_X-blue_line'] = outcomes2['rusher_X-blue_line'].abs()
+
+        outcomes_final['rusher_X-blue_line'] = outcomes2['rusher_X-blue_line'].values
+        outcomes_final['rusher_X-green_line'] = outcomes2['rusher_X-green_line'].values
+
+        enc = OneHotEncoder()
+        def get_team_x(df, attack, drop=False):
+            global df2
+            df2 = df.copy()
+            if drop is True:
+                df = df[df['player_team'] == df['PossessionTeam']]
+                rusher_X = df[df['NflId'] == df['NflIdRusher']]['X'].iloc[0]
+
+                if df['PlayDirection'].iloc[0] == 'left':
+                    df = df[df['X'] < rusher_X]
+                else:
+                    df = df[df['X'] > rusher_X]
+                return df['X'].mean()
+
+            if attack is True:
+                df = df[df['player_team'] == df['PossessionTeam']]
+                return df['X'].mean()
+            else:
+                df = df[df['player_team'] != df['PossessionTeam']]
+                return df['X'].mean()
+
+        outcomes2['attack_team_X'] = group.apply(lambda s: get_team_x(s, attack=True)).values
+
+        outcomes2['defend_team_X'] = group.apply(lambda s: get_team_x(s, attack=False)).values
+
+        outcomes2['attack_team_X_drop_rusher'] = group.apply(lambda s: get_team_x(s, attack=True, drop=True)).values
+
+        # 两个球队和两条线的距离
+
+        outcomes_final['attack_team_X-defend_team_X'] = (
+                    outcomes2['attack_team_X'] - outcomes2['defend_team_X']).abs().values
+        outcomes_final['attack_team_X-blue_line'] = (outcomes2['attack_team_X'] - outcomes2['blue_line']).abs().values
+        outcomes_final['defend_team_X-blue_line'] = (outcomes2['defend_team_X'] - outcomes2['blue_line']).abs().values
+        outcomes_final['attack_team_X_drop_rusher-blue_line'] = (
+                    outcomes2['attack_team_X_drop_rusher'] - outcomes2['blue_line']).abs().values
+
+        outcomes_final['attack_team_X-green_line'] = (outcomes2['attack_team_X'] - outcomes2['green_line']).abs().values
+        outcomes_final['defend_team_X-green_line'] = (outcomes2['defend_team_X'] - outcomes2['green_line']).abs().values
+        outcomes_final['attack_team_X_drop_rusher-green_line'] = (
+                    outcomes2['attack_team_X_drop_rusher'] - outcomes2['green_line']).abs().values
+
+        outcomes_final['rusher_X-attack_team_X_drop_rusher'] = (
+                    outcomes2['rusher_X'] - outcomes2['attack_team_X_drop_rusher']).abs().values
+
+        # 平局剩下每个down要前进多少
+
+        outcomes2['down'] = train.groupby(['GameId', 'PlayId'])['Down'].apply(lambda s: s.iloc[0]).values
+
+        outcomes2['distance'] = train.groupby(['GameId', 'PlayId'])['Distance'].apply(lambda s: s.iloc[0]).values
+
+        outcomes_final['average_distance'] = (outcomes2['distance'] / (5 - outcomes2['down'])).values
+
+        outcomes_final['average_distance2'] = (outcomes2['distance'] / (4 - outcomes2['down'].replace(4, 3))).values
+
+
+        # 加一下OffenseFormation
+        outcomes_final['OffenseFormation2'] = group.apply(lambda s: s.iloc[0]['OffenseFormation']).values
+        outcomes_final['OffenseFormation2'] = outcomes_final['OffenseFormation2'].apply(map_strategy)
+        #
+        # if not deploy:
+        #     enc.fit(outcomes_final['OffenseFormation2'].values.reshape(-1,1))
+        # onehot_ans = enc.transform(outcomes_final['OffenseFormation2'].values.reshape(-1,1))
+        # onehot_ans = pd.Series(data=onehot_ans)
+        # outcomes_final = np.concatenate((y_pred, y_0), axis=1)
+        # outcomes_final = pd.get_dummies(outcomes_final, prefix='OffenseFormation2')
+
+        # 每个队伍的总速度
+        def get_speed_sum(df, t):
+            if t == 'attacks':
+                df = df[df['player_team'] == df['PossessionTeam']]
+                return df['S'].sum()
+            if t == 'defends':
+                df = df[df['player_team'] != df['PossessionTeam']]
+                return df['S'].sum()
+            if t == 'attacka':
+                df = df[df['player_team'] == df['PossessionTeam']]
+                return df['A'].sum()
+            if t == 'defenda':
+                df = df[df['player_team'] != df['PossessionTeam']]
+                return df['A'].sum()
+
+        outcomes_final['defends'] = group.apply(lambda s: get_speed_sum(s, 'defends')).values
+        outcomes_final['defenda'] = group.apply(lambda s: get_speed_sum(s, 'defenda')).values
+        outcomes_final['attacks'] = group.apply(lambda s: get_speed_sum(s, 'attacks')).values
+        outcomes_final['attacka'] = group.apply(lambda s: get_speed_sum(s, 'attacka')).values
+        outcomes_final['defends-attacks'] = outcomes_final['defends'] - outcomes_final['attacks']
+        outcomes_final['defenda-attacka'] = outcomes_final['defenda'] - outcomes_final['attacka']
+
+        # 攻击方平均每分钟要追多少分
+        def get_score(df, t):
+            attack_team = df[df['PossessionTeam'] == df['player_team']].iloc[0]['Team']
+            defend_team = df[df['PossessionTeam'] != df['player_team']].iloc[0]['Team']
+            if attack_team == 'home':
+                attack_score = df.iloc[0]['HomeScoreBeforePlay']
+                defend_score = df.iloc[0]['VisitorScoreBeforePlay']
+            else:
+                attack_score = df.iloc[0]['VisitorScoreBeforePlay']
+                defend_score = df.iloc[0]['HomeScoreBeforePlay']
+            if t == 'a':
+                return attack_score
+            if t == 'd':
+                return defend_score
+
+        outcomes2['defend_score'] = group.apply(lambda s: get_score(s, 'd')).values
+        outcomes2['attack_score'] = group.apply(lambda s: get_score(s, 'a')).values
+        outcomes2['attack_score-defend_score'] = outcomes2['attack_score'] - outcomes2['defend_score']
+
+        def to_seconds(t):
+            m, s, _ = t.split(':')
+            return int(m) * 60 + int(s)
+
+        outcomes2['seconds'] = group.apply(lambda s: to_seconds(s['GameClock'].iloc[0])).values
+        outcomes2['quarter'] = group.apply(lambda s: s['Quarter'].iloc[0]).values
+        outcomes_final['score/seconds'] = (outcomes2['attack_score-defend_score'] / outcomes2['seconds']).values
+        outcomes_final['score/seconds2'] = (outcomes2['attack_score-defend_score'] / (
+                    outcomes2['seconds'] + (4 - outcomes2['quarter']) * 900)).values
+
+        return outcomes_final
+
+    def combine_features(relative_to_back, defense, team, static, ndfeat, deploy=deploy):
         df = pd.merge(relative_to_back, defense, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, team, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, static, on=['GameId', 'PlayId'], how='inner')
+        df = pd.merge(df, ndfeat, on=['GameId', 'PlayId'], how='inner')
 
         if not deploy:
             df = pd.merge(df, outcomes, on=['GameId', 'PlayId'], how='inner')
@@ -321,6 +548,7 @@ def create_features(df, deploy=False):
 
     # if deploy == False:
     #     df.loc[df['Season'] == 2017, 'Orientation'] = np.mod(90 + df.loc[train['Season'] == 2017, 'Orientation'], 360)
+    nd_feat = naodong_feat(df, deploy=deploy)
     yardline = update_yardline(df)
     df = update_orientation(df, yardline)
     back_feats = back_features(df)
@@ -328,7 +556,7 @@ def create_features(df, deploy=False):
     def_feats = defense_features(df)
     tm_feats = team_features(df)
     static_feats = static_features(df)
-    basetable = combine_features(rel_back, def_feats, tm_feats, static_feats, deploy=deploy)
+    basetable = combine_features(rel_back, def_feats, tm_feats, static_feats, nd_feat, deploy=deploy)
 
     # print(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
 
@@ -349,6 +577,11 @@ def process_two(t_):
     t_["Av"] = t_["A"] * np.cos(radian_angle)
     t_["Ah"] = t_["A"] * np.sin(radian_angle)
     t_["diff_ang"] = t_["Dir"] - t_["Orientation"]
+
+    t_.fillna(0, inplace=True)
+    t_.replace(np.nan, 0.0, inplace=True)
+    t_.replace([np.inf, -np.inf], 0.0, inplace=True)
+
     return t_
 
 
@@ -470,6 +703,110 @@ def predict(x_te):
 
     return y_pred
 
+def reduce_mem_usage(df, verbose=True):
+    numerics = ['int16', 'int32', 'int64', 'float16', 'float32', 'float64']
+    start_mem = df.memory_usage().sum() / 1024**2
+    for col in df.columns:
+        col_type = df[col].dtypes
+        if col_type in numerics:
+            c_min = df[col].min()
+            c_max = df[col].max()
+            if str(col_type)[:3] == 'int':
+                if c_min > np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
+                    df[col] = df[col].astype(np.int8)
+                elif c_min > np.iinfo(np.int16).min and c_max < np.iinfo(np.int16).max:
+                    df[col] = df[col].astype(np.int16)
+                elif c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+                    df[col] = df[col].astype(np.int32)
+                elif c_min > np.iinfo(np.int64).min and c_max < np.iinfo(np.int64).max:
+                    df[col] = df[col].astype(np.int64)
+            else:
+                if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
+                    df[col] = df[col].astype(np.float16)
+                elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+                    df[col] = df[col].astype(np.float32)
+                else:
+                    df[col] = df[col].astype(np.float64)
+    end_mem = df.memory_usage().sum() / 1024**2
+    if verbose: print('Mem. usage decreased to {:5.2f} Mb ({:.1f}% reduction)'.format(end_mem, 100 * (start_mem - end_mem) / start_mem))
+    return df
+
+import lightgbm as lgb
+def feature_importance(X,y):
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=0)
+    y_train = np.argmax(y_train, axis=1)
+    y_val = np.argmax(y_val, axis=1)
+    trn_data = lgb.Dataset(X_train, label=y_train)
+    val_data = lgb.Dataset(X_val, label=y_val)
+
+    params = {
+        # 'n_estimators': 500,
+        'learning_rate': 0.1,
+
+        # 'num_leaves': 32,  # Original 50
+        'max_depth': 5,
+
+        'min_data_in_leaf': 10,  # min_child_samples
+        # 'max_bin': 58,
+        'min_child_weight': 19,
+
+        "feature_fraction": 0.65,  # 0.9 colsample_bytree
+        # "bagging_freq": 1,
+        "bagging_fraction": 0.9,  # 'subsample'
+        "bagging_seed": 2019,
+
+        # 'min_split_gain': 0.0,
+        "lambda_l1": 0.95,
+        "lambda_l2": 0.1,
+
+        "boosting": "gbdt",
+        'num_class': classify_type,  # 199 possible places
+        # 'num_class': 199,  # 199 possible places
+        'objective': 'multiclass',
+        "metric": "None",
+        # "metric": "multi_logloss",
+        "verbosity": -1,
+        "seed": 2019,
+    }
+    num_round = 10000
+    params['learning_rate'] = 0.1
+    model = lgb.train(params, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=2000,
+                      early_stopping_rounds=100, feval=crps_eval)
+    feature_importance = model.feature_importance(importance_type="gain")
+    fscores = pd.Series(feature_importance, X_train.columns).sort_values(ascending=False)
+    print(fscores)
+    print(fscores[:10])
+    print(fscores[-10:])
+    fscores.plot(kind='bar', title='Feature Importance(importance_type="gain")', figsize=(20, 10))
+    plt.ylabel('Feature Importance Score')
+    plt.show()
+    fscores_rate = 100 * (feature_importance / max(feature_importance))
+    print(fscores)
+    print(fscores[:10])
+    print(fscores[-10:])
+    fscores = pd.Series(fscores_rate, X_train.columns).sort_values(ascending=False)
+    fscores.plot(kind='bar', title='Feature Importance(importance_type="gain")', figsize=(20, 10))
+    plt.ylabel('Feature Importance Score')
+    plt.show()
+    # y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+    # crps = metric_crps(y_true, y_pred)
+    gc.collect()
+    return
+
+def crps_eval(y_pred, dataset, is_higher_better=False):
+    labels = dataset.get_label()
+    y_true = np.zeros((len(labels), classify_type))
+    for i, v in enumerate(labels):
+        y_true[i, int(v):] = 1
+    y_pred = y_pred.reshape(-1, classify_type, order='F')
+    y_pred = np.clip(y_pred.cumsum(axis=1), 0, 1)
+    return 'crps', np.mean((y_pred - y_true) ** 2), False
+
+def metric_crps(y_true, y_pred):
+    y_true = np.clip(np.cumsum(y_true, axis=1), 0, 1)
+    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+    return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
+
 
 TRAIN_OFFLINE = False
 CLASSIFY_NEGITAVE = -14  # must < 0
@@ -489,20 +826,52 @@ if __name__ == '__main__':
     train_basetable = process_two(train_basetable)
 
     train = train_basetable.loc[(train_basetable['Yards'] >= CLASSIFY_NEGITAVE) & (train_basetable['Yards'] <= CLASSIFY_POSTIVE)]
-
+    # train = reduce_mem_usage(train)
     print("before delete:", train_basetable.shape)
     print("After delete:", train.shape)
-    # print(train.head())
+    print(train_basetable.head())
     X = train
     yards = X.Yards
 
+    gc.collect()
     # y = np.zeros((yards.shape[0], 199))
     y = np.zeros((yards.shape[0], classify_type))
     for idx, target in enumerate(list(yards)):
         # y[idx][99 + target] = 1
         y[idx][-CLASSIFY_NEGITAVE + target] = 1
-
     X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
+
+    # feature_importance(X, y)
+    # origin_columns = X.columns.values
+
+    # sns.set(rc={'figure.figsize': (100, 100)})
+    corr = X.corr()
+    # plt.figure()
+    # ax = sns.heatmap(corr, linewidths=.5, annot=True, cmap="YlGnBu", fmt='.1g')
+    # plt.show()
+
+    # print(X.shape)
+    # print(corr.shape)
+    # Drop highly correlated features (37->28)
+    columns = np.full((corr.shape[0],), True, dtype=bool)
+    for i in range(corr.shape[0]):
+        for j in range(i + 1, corr.shape[0]):
+            if corr.iloc[i, j] >= 0.999:
+                if columns[j]:
+                    columns[j] = False
+    # print(corr.columns.values)
+    # ret_list = list(set(corr.columns.values) ^ set(X.columns.values))
+    # print(ret_list)
+    feature_columns = X.columns[columns].values
+    drop_columns = X.columns[columns == False].values
+    # drop_columns = ['def_max_dist' 'def_X_mean' 'def_X_median' 'def_X_q80' 'def_X_q30','tm_ptp_dist' 'X' 'YardLine' 'fe1']
+    # drop_columns = ['def_max_dist','def_X_mean','def_X_median','def_X_q30','tm_ptp_dist','X', 'YardLine','rusher_X-blue_line','defends','defenda','attacks','attacka']
+    # drop_columns = ['YardLine']
+    X.drop(drop_columns, axis=1, inplace=True)
+    ### print(feature_columns)
+    ### X = X[feature_columns]
+    print(drop_columns)
+    print("After del highly correlated features: ", X.shape)
 
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
@@ -510,8 +879,7 @@ if __name__ == '__main__':
     losses = []
     models = []
     mean_crps_csv = []
-
-    for k in range(7):
+    for k in range(5):
         #     for k in range(5):
         #         kfold = KFold(5, random_state=42 + k, shuffle=True)
         kfold = KFold(9, random_state=2019 + 17 * k, shuffle=True)
@@ -523,6 +891,7 @@ if __name__ == '__main__':
                 break
             tr_x, tr_y = X[tr_inds], y[tr_inds]
             val_x, val_y = X[val_inds], y[val_inds]
+            # print(tr_x.shape)
             model, crps = get_model(tr_x, tr_y, val_x, val_y)
             models.append(model)
             # print("the %d fold crps is %f" % ((k_fold + 1), crps))
@@ -545,7 +914,12 @@ if __name__ == '__main__':
 
             basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
 
-            basetable = basetable[feature_columns]
+            basetable.drop(drop_columns, axis=1, inplace=True)
+
+            # print(basetable.shape)
+            # print(len(basetable.columns.values))
+            # ret_list = list(set(basetable.columns.values) ^ set(origin_columns))
+            # print(ret_list)
             scaled_basetable = scaler.transform(basetable)
 
             y_pred = predict(scaled_basetable)
