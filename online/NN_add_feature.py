@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler,OneHotEncoder
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import KFold, train_test_split
 from keras.layers import BatchNormalization
 from keras.optimizers import Adam
@@ -416,7 +416,6 @@ def create_features(df, deploy=False):
         outcomes_final['rusher_X-blue_line'] = outcomes2['rusher_X-blue_line'].values
         outcomes_final['rusher_X-green_line'] = outcomes2['rusher_X-green_line'].values
 
-        enc = OneHotEncoder()
         def get_team_x(df, attack, drop=False):
             global df2
             df2 = df.copy()
@@ -841,37 +840,37 @@ if __name__ == '__main__':
         y[idx][-CLASSIFY_NEGITAVE + target] = 1
     X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
-    # feature_importance(X, y)
-    # origin_columns = X.columns.values
-
-    # sns.set(rc={'figure.figsize': (100, 100)})
-    corr = X.corr()
-    # plt.figure()
-    # ax = sns.heatmap(corr, linewidths=.5, annot=True, cmap="YlGnBu", fmt='.1g')
-    # plt.show()
-
-    # print(X.shape)
-    # print(corr.shape)
-    # Drop highly correlated features (37->28)
-    columns = np.full((corr.shape[0],), True, dtype=bool)
-    for i in range(corr.shape[0]):
-        for j in range(i + 1, corr.shape[0]):
-            if corr.iloc[i, j] >= 0.999:
-                if columns[j]:
-                    columns[j] = False
-    # print(corr.columns.values)
-    # ret_list = list(set(corr.columns.values) ^ set(X.columns.values))
-    # print(ret_list)
-    feature_columns = X.columns[columns].values
-    drop_columns = X.columns[columns == False].values
-    # drop_columns = ['def_max_dist' 'def_X_mean' 'def_X_median' 'def_X_q80' 'def_X_q30','tm_ptp_dist' 'X' 'YardLine' 'fe1']
+    # # feature_importance(X, y)
+    # # origin_columns = X.columns.values
+    #
+    # # sns.set(rc={'figure.figsize': (100, 100)})
+    # corr = X.corr()
+    # # plt.figure()
+    # # ax = sns.heatmap(corr, linewidths=.5, annot=True, cmap="YlGnBu", fmt='.1g')
+    # # plt.show()
+    #
+    # # print(X.shape)
+    # # print(corr.shape)
+    # # Drop highly correlated features (37->28)
+    # columns = np.full((corr.shape[0],), True, dtype=bool)
+    # for i in range(corr.shape[0]):
+    #     for j in range(i + 1, corr.shape[0]):
+    #         if corr.iloc[i, j] >= 0.999:
+    #             if columns[j]:
+    #                 columns[j] = False
+    # # print(corr.columns.values)
+    # # ret_list = list(set(corr.columns.values) ^ set(X.columns.values))
+    # # print(ret_list)
+    # feature_columns = X.columns[columns].values
+    # # drop_columns = X.columns[columns == False].values
+    # # drop_columns = ['def_max_dist' 'def_X_mean' 'def_X_median' 'def_X_q80' 'def_X_q30','tm_ptp_dist' 'X' 'YardLine' 'fe1']
     # drop_columns = ['def_max_dist','def_X_mean','def_X_median','def_X_q30','tm_ptp_dist','X', 'YardLine','rusher_X-blue_line','defends','defenda','attacks','attacka']
-    # drop_columns = ['YardLine']
-    X.drop(drop_columns, axis=1, inplace=True)
-    ### print(feature_columns)
-    ### X = X[feature_columns]
-    print(drop_columns)
-    print("After del highly correlated features: ", X.shape)
+    # # drop_columns = ['YardLine']
+    # X.drop(drop_columns, axis=1, inplace=True)
+    # ### print(feature_columns)
+    # ### X = X[feature_columns]
+    # print(drop_columns)
+    # print("After del highly correlated features: ", X.shape)
 
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
@@ -914,7 +913,7 @@ if __name__ == '__main__':
 
             basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
 
-            basetable.drop(drop_columns, axis=1, inplace=True)
+            # basetable.drop(drop_columns, axis=1, inplace=True)
 
             # print(basetable.shape)
             # print(len(basetable.columns.values))

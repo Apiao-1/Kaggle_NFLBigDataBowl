@@ -38,6 +38,28 @@ def map_weather(txt):
         return -3 * ans
     return 0
 
+def map_strategy(txt):
+    if pd.isna(txt):
+        return 0
+    if txt == 'SINGLEBACK':
+        return 1
+    if txt == 'SHOTGUN':
+        return 2
+    if txt == 'I_FORM':
+        return 3
+    if txt == 'PISTOL':
+        return 4
+    if txt == 'JUMBO':
+        return 5
+    if txt == 'WILDCAT':
+        return 6
+    if txt == 'ACE':
+        return 7
+    if txt == 'EMPTY':
+        return 8
+    return 0
+
+
 
 def orientation_to_cat(x):
     x = np.clip(x, 0, 360 - 1)
@@ -240,6 +262,7 @@ def create_features(df, deploy=False):
 
         return team
 
+    # tested
     def static_features(df):
 
         add_new_feas = []
@@ -267,9 +290,7 @@ def create_features(df, deploy=False):
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: "indoor" if not pd.isna(x) and "indoor" in x else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
-            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party',
-                                                                                        'partly') if not pd.isna(
-                x) else x)
+            lambda x: x.replace('coudy', 'cloudy').replace('clouidy', 'cloudy').replace('party','partly') if not pd.isna(x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
             lambda x: x.replace('clear and sunny', 'sunny and clear') if not pd.isna(x) else x)
         df['GameWeather_process'] = df['GameWeather_process'].apply(
@@ -277,8 +298,8 @@ def create_features(df, deploy=False):
         df['GameWeather_dense'] = df['GameWeather_process'].apply(map_weather)
         add_new_feas.append('GameWeather_dense')
 
-        df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
-        add_new_feas.append("Dir_ob")
+        # df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
+        # add_new_feas.append("Dir_ob")
 
         df["Orientation_sin"] = df["Orientation"].apply(lambda x: np.sin(x / 360 * 2 * np.pi))
         df["Orientation_cos"] = df["Orientation"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
@@ -307,10 +328,214 @@ def create_features(df, deploy=False):
 
         return static_features
 
-    def combine_features(relative_to_back, defense, team, static, deploy=deploy):
+    def naodong_feat(train, deploy=deploy):
+        # outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+
+        train['VisitorTeamAbbr'].replace('ARI', 'ARZ', inplace=True)
+        train['HomeTeamAbbr'].replace('ARI', 'ARZ', inplace=True)
+        train['VisitorTeamAbbr'].replace('BAL', 'BLT', inplace=True)
+        train['HomeTeamAbbr'].replace('BAL', 'BLT', inplace=True)
+        train['VisitorTeamAbbr'].replace('CLE', 'CLV', inplace=True)
+        train['HomeTeamAbbr'].replace('CLE', 'CLV', inplace=True)
+        train['VisitorTeamAbbr'].replace('HOU', 'HST', inplace=True)
+        train['HomeTeamAbbr'].replace('HOU', 'HST', inplace=True)
+
+        # 球队名称
+        def get_player_team(df):
+            if df['Team'] == 'home':
+                return df['HomeTeamAbbr']
+            else:
+                return df['VisitorTeamAbbr']
+
+        train['player_team'] = train.apply(get_player_team, axis=1)
+
+        group = train.groupby(['GameId', 'PlayId'])
+
+        # 发球线
+        def get_blue_line(a):
+            k = a.iloc[0]
+
+            if k['PlayDirection'] == 'left':
+                if k['PossessionTeam'] != k['FieldPosition']:
+                    lines = k['YardLine'] + 10
+                else:
+                    lines = 110 - k['YardLine']
+                d_line = lines - k['Distance']
+            else:
+                if k['PossessionTeam'] != k['FieldPosition']:
+                    lines = 110 - k['YardLine']
+                else:
+                    lines = k['YardLine'] + 10
+                d_line = lines + k['Distance']
+            return lines
+
+        def get_green_line(a):
+            k = a.iloc[0]
+
+            if k['PlayDirection'] == 'left':
+                if k['PossessionTeam'] != k['FieldPosition']:
+                    lines = k['YardLine'] + 10
+                else:
+                    lines = 110 - k['YardLine']
+                d_line = lines - k['Distance']
+            else:
+                if k['PossessionTeam'] != k['FieldPosition']:
+                    lines = 110 - k['YardLine']
+                else:
+                    lines = k['YardLine'] + 10
+                d_line = lines + k['Distance']
+            return d_line
+
+        # outcomes2 = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+        # outcomes_final = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
+
+        outcomes2 = train[['GameId', 'PlayId']].drop_duplicates()
+        outcomes_final = train[['GameId', 'PlayId']].drop_duplicates()
+
+        outcomes2 = outcomes2.merge(group.apply(get_blue_line).rename('blue_line').reset_index(),
+                                    on=['GameId', 'PlayId'])
+
+        outcomes2 = outcomes2.merge(group.apply(get_green_line).rename('green_line').reset_index(),
+                                    on=['GameId', 'PlayId'])
+
+        # 持球人X
+        outcomes2['rusher_X'] = group.apply(lambda s: s[s['NflId'] == s['NflIdRusher']]['X'].iloc[0]).values
+
+        # 持球人和两条线的距离
+        outcomes2['rusher_X-green_line'] = outcomes2['rusher_X'] - outcomes2['green_line']
+
+        outcomes2['rusher_X-green_line'] = outcomes2['rusher_X-green_line'].abs()
+
+        outcomes2['rusher_X-blue_line'] = outcomes2['rusher_X'] - outcomes2['blue_line']
+
+        outcomes2['rusher_X-blue_line'] = outcomes2['rusher_X-blue_line'].abs()
+
+        outcomes_final['rusher_X-blue_line'] = outcomes2['rusher_X-blue_line'].values
+        outcomes_final['rusher_X-green_line'] = outcomes2['rusher_X-green_line'].values
+
+        def get_team_x(df, attack, drop=False):
+            global df2
+            df2 = df.copy()
+            if drop is True:
+                df = df[df['player_team'] == df['PossessionTeam']]
+                rusher_X = df[df['NflId'] == df['NflIdRusher']]['X'].iloc[0]
+
+                if df['PlayDirection'].iloc[0] == 'left':
+                    df = df[df['X'] < rusher_X]
+                else:
+                    df = df[df['X'] > rusher_X]
+                return df['X'].mean()
+
+            if attack is True:
+                df = df[df['player_team'] == df['PossessionTeam']]
+                return df['X'].mean()
+            else:
+                df = df[df['player_team'] != df['PossessionTeam']]
+                return df['X'].mean()
+
+        outcomes2['attack_team_X'] = group.apply(lambda s: get_team_x(s, attack=True)).values
+
+        outcomes2['defend_team_X'] = group.apply(lambda s: get_team_x(s, attack=False)).values
+
+        outcomes2['attack_team_X_drop_rusher'] = group.apply(lambda s: get_team_x(s, attack=True, drop=True)).values
+
+        # 两个球队和两条线的距离
+
+        outcomes_final['attack_team_X-defend_team_X'] = (
+                    outcomes2['attack_team_X'] - outcomes2['defend_team_X']).abs().values
+        outcomes_final['attack_team_X-blue_line'] = (outcomes2['attack_team_X'] - outcomes2['blue_line']).abs().values
+        outcomes_final['defend_team_X-blue_line'] = (outcomes2['defend_team_X'] - outcomes2['blue_line']).abs().values
+        outcomes_final['attack_team_X_drop_rusher-blue_line'] = (
+                    outcomes2['attack_team_X_drop_rusher'] - outcomes2['blue_line']).abs().values
+
+        outcomes_final['attack_team_X-green_line'] = (outcomes2['attack_team_X'] - outcomes2['green_line']).abs().values
+        outcomes_final['defend_team_X-green_line'] = (outcomes2['defend_team_X'] - outcomes2['green_line']).abs().values
+        outcomes_final['attack_team_X_drop_rusher-green_line'] = (
+                    outcomes2['attack_team_X_drop_rusher'] - outcomes2['green_line']).abs().values
+
+        outcomes_final['rusher_X-attack_team_X_drop_rusher'] = (
+                    outcomes2['rusher_X'] - outcomes2['attack_team_X_drop_rusher']).abs().values
+
+        # 平局剩下每个down要前进多少
+
+        outcomes2['down'] = train.groupby(['GameId', 'PlayId'])['Down'].apply(lambda s: s.iloc[0]).values
+
+        outcomes2['distance'] = train.groupby(['GameId', 'PlayId'])['Distance'].apply(lambda s: s.iloc[0]).values
+
+        outcomes_final['average_distance'] = (outcomes2['distance'] / (5 - outcomes2['down'])).values
+
+        outcomes_final['average_distance2'] = (outcomes2['distance'] / (4 - outcomes2['down'].replace(4, 3))).values
+
+
+        # 加一下OffenseFormation
+        outcomes_final['OffenseFormation2'] = group.apply(lambda s: s.iloc[0]['OffenseFormation']).values
+        outcomes_final['OffenseFormation2'] = outcomes_final['OffenseFormation2'].apply(map_strategy)
+        #
+        # if not deploy:
+        #     enc.fit(outcomes_final['OffenseFormation2'].values.reshape(-1,1))
+        # onehot_ans = enc.transform(outcomes_final['OffenseFormation2'].values.reshape(-1,1))
+        # onehot_ans = pd.Series(data=onehot_ans)
+        # outcomes_final = np.concatenate((y_pred, y_0), axis=1)
+        # outcomes_final = pd.get_dummies(outcomes_final, prefix='OffenseFormation2')
+
+        # 每个队伍的总速度
+        def get_speed_sum(df, t):
+            if t == 'attacks':
+                df = df[df['player_team'] == df['PossessionTeam']]
+                return df['S'].sum()
+            if t == 'defends':
+                df = df[df['player_team'] != df['PossessionTeam']]
+                return df['S'].sum()
+            if t == 'attacka':
+                df = df[df['player_team'] == df['PossessionTeam']]
+                return df['A'].sum()
+            if t == 'defenda':
+                df = df[df['player_team'] != df['PossessionTeam']]
+                return df['A'].sum()
+
+        outcomes_final['defends'] = group.apply(lambda s: get_speed_sum(s, 'defends')).values
+        outcomes_final['defenda'] = group.apply(lambda s: get_speed_sum(s, 'defenda')).values
+        outcomes_final['attacks'] = group.apply(lambda s: get_speed_sum(s, 'attacks')).values
+        outcomes_final['attacka'] = group.apply(lambda s: get_speed_sum(s, 'attacka')).values
+        outcomes_final['defends-attacks'] = outcomes_final['defends'] - outcomes_final['attacks']
+        outcomes_final['defenda-attacka'] = outcomes_final['defenda'] - outcomes_final['attacka']
+
+        # 攻击方平均每分钟要追多少分
+        def get_score(df, t):
+            attack_team = df[df['PossessionTeam'] == df['player_team']].iloc[0]['Team']
+            defend_team = df[df['PossessionTeam'] != df['player_team']].iloc[0]['Team']
+            if attack_team == 'home':
+                attack_score = df.iloc[0]['HomeScoreBeforePlay']
+                defend_score = df.iloc[0]['VisitorScoreBeforePlay']
+            else:
+                attack_score = df.iloc[0]['VisitorScoreBeforePlay']
+                defend_score = df.iloc[0]['HomeScoreBeforePlay']
+            if t == 'a':
+                return attack_score
+            if t == 'd':
+                return defend_score
+
+        outcomes2['defend_score'] = group.apply(lambda s: get_score(s, 'd')).values
+        outcomes2['attack_score'] = group.apply(lambda s: get_score(s, 'a')).values
+        outcomes2['attack_score-defend_score'] = outcomes2['attack_score'] - outcomes2['defend_score']
+
+        def to_seconds(t):
+            m, s, _ = t.split(':')
+            return int(m) * 60 + int(s)
+
+        outcomes2['seconds'] = group.apply(lambda s: to_seconds(s['GameClock'].iloc[0])).values
+        outcomes2['quarter'] = group.apply(lambda s: s['Quarter'].iloc[0]).values
+        outcomes_final['score/seconds'] = (outcomes2['attack_score-defend_score'] / outcomes2['seconds']).values
+        outcomes_final['score/seconds2'] = (outcomes2['attack_score-defend_score'] / (
+                    outcomes2['seconds'] + (4 - outcomes2['quarter']) * 900)).values
+
+        return outcomes_final
+
+    def combine_features(relative_to_back, defense, team, static, ndfeat, deploy=deploy):
         df = pd.merge(relative_to_back, defense, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, team, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, static, on=['GameId', 'PlayId'], how='inner')
+        df = pd.merge(df, ndfeat, on=['GameId', 'PlayId'], how='inner')
 
         if not deploy:
             df = pd.merge(df, outcomes, on=['GameId', 'PlayId'], how='inner')
@@ -319,6 +544,7 @@ def create_features(df, deploy=False):
 
     # if deploy == False:
     #     df.loc[df['Season'] == 2017, 'Orientation'] = np.mod(90 + df.loc[train['Season'] == 2017, 'Orientation'], 360)
+    nd_feat = naodong_feat(df, deploy=deploy)
     yardline = update_yardline(df)
     df = update_orientation(df, yardline)
     back_feats = back_features(df)
@@ -326,13 +552,13 @@ def create_features(df, deploy=False):
     def_feats = defense_features(df)
     tm_feats = team_features(df)
     static_feats = static_features(df)
-    basetable = combine_features(rel_back, def_feats, tm_feats, static_feats, deploy=deploy)
+    basetable = combine_features(rel_back, def_feats, tm_feats, static_feats, nd_feat, deploy=deploy)
 
-    # logging.info(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
+    # print(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
 
     return basetable
 
-
+# tested
 def process_two(t_):
     t_['fe1'] = pd.Series(np.sqrt(np.absolute(np.square(t_.X.values) + np.square(t_.Y.values))))
     t_['fe5'] = np.square(t_['S'].values) + 2 * t_['A'].values * t_['Dis'].values  # N
@@ -347,11 +573,12 @@ def process_two(t_):
     t_["Av"] = t_["A"] * np.cos(radian_angle)
     t_["Ah"] = t_["A"] * np.sin(radian_angle)
     t_["diff_ang"] = t_["Dir"] - t_["Orientation"]
+
+    t_.fillna(0, inplace=True)
+    t_.replace(np.nan, 0.0, inplace=True)
+    t_.replace([np.inf, -np.inf], 0.0, inplace=True)
+
     return t_
-
-
-best_score = 9999
-best_param = {}
 
 
 def metric_crps(y_true, y_pred):
@@ -385,8 +612,8 @@ def BayesianSearch(clf, params):
 
     return params
 
-
-def GBM_evaluate(min_data_in_leaf, min_child_weight, feature_fraction, max_depth, bagging_fraction, lambda_l1, lambda_l2):
+flag = True
+def GBM_evaluate(min_data_in_leaf, min_child_weight, feature_fraction, max_depth, bagging_fraction, lambda_l1, lambda_l2, bagging_freq):
     """自定义的模型评估函数"""
 
     # 模型固定的超参数
@@ -395,20 +622,20 @@ def GBM_evaluate(min_data_in_leaf, min_child_weight, feature_fraction, max_depth
         'learning_rate': 0.1,
 
         # 'num_leaves': 32,  # Original 50
-        'max_depth': 5,
+        'max_depth': 7,
 
-        'min_data_in_leaf': 10,  # min_child_samples
+        'min_data_in_leaf': 49,  # min_child_samples
         # 'max_bin': 58,
         'min_child_weight': 19,
 
-        "feature_fraction": 0.65,  # 0.9 colsample_bytree
-        # "bagging_freq": 1,
-        "bagging_fraction": 0.8,  # 'subsample'
+        "feature_fraction": 0.75,  # 0.9 colsample_bytree
+        "bagging_freq": 9,
+        "bagging_fraction": 0.85,  # 'subsample'
         "bagging_seed": 2019,
 
         # 'min_split_gain': 0.0,
-        "lambda_l1": 0.95,
-        "lambda_l2": 0.1,
+        "lambda_l1": 0.63,
+        "lambda_l2": 0.22,
 
         "boosting": "gbdt",
         'num_class': classify_type,  # 199 possible places
@@ -419,16 +646,20 @@ def GBM_evaluate(min_data_in_leaf, min_child_weight, feature_fraction, max_depth
         "verbosity": -1,
         "seed": 2019,
     }
-    find_best_param(X, y, param)
+    global flag
+    if flag:
+        find_best_param(X, y, param)
+        flag = False
 
 
     # 贝叶斯优化器生成的超参数
     param['min_child_weight'] = int(min_child_weight)
-    param['feature_fraction'] = float(feature_fraction),
-    param['max_depth'] = int(max_depth),
-    param['bagging_fraction'] = float(bagging_fraction),
-    param['lambda_l2'] = float(lambda_l2),
-    param['lambda_l1'] = float(lambda_l1),
+    param['feature_fraction'] = float(feature_fraction)
+    param['max_depth'] = int(max_depth)
+    param['bagging_fraction'] = float(bagging_fraction)
+    param['bagging_freq'] = int(bagging_freq)
+    param['lambda_l2'] = float(lambda_l2)
+    param['lambda_l1'] = float(lambda_l1)
     param['min_data_in_leaf'] = int(min_data_in_leaf)
 
     # 5-flod 交叉检验，注意BayesianOptimization会向最大评估值的方向优化，因此对于回归任务需要取负数。
@@ -436,6 +667,9 @@ def GBM_evaluate(min_data_in_leaf, min_child_weight, feature_fraction, max_depth
     val = -find_best_param(X, y, param)
 
     return val
+
+best_score = 9999
+best_param = {}
 
 def find_best_param(X, y, params):
     kf = KFold(n_splits=5, random_state=2019)
@@ -531,9 +765,10 @@ if __name__ == '__main__':
         'feature_fraction': (0.4, 1),
         'max_depth': (5, 15),
         'bagging_fraction': (0.5, 1),
+        'bagging_freq': (1, 10),
         'lambda_l2': (0.1, 1),
         'lambda_l1': (0.1, 1),
-        'min_data_in_leaf': (10, 30)
+        'min_data_in_leaf': (1, 50)
     }
 
     # 调用贝叶斯优化
