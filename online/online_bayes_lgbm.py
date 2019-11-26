@@ -394,21 +394,21 @@ def GBM_evaluate(min_data_in_leaf, min_child_weight, feature_fraction, max_depth
         # 'n_estimators': 500,
         'learning_rate': 0.1,
 
-        # 'num_leaves': 12,  # Original 50
-        'max_depth': 4,
+        # 'num_leaves': 32,  # Original 50
+        'max_depth': 5,
 
-        'min_data_in_leaf': 91,  # min_child_samples
+        'min_data_in_leaf': 10,  # min_child_samples
         # 'max_bin': 58,
-        'min_child_weight': 7,
+        'min_child_weight': 19,
 
-        "feature_fraction": 0.8,  # 0.9 colsample_bytree
+        "feature_fraction": 0.65,  # 0.9 colsample_bytree
         # "bagging_freq": 1,
-        "bagging_fraction": 0.8,  # 'bagging_fraction'
+        "bagging_fraction": 0.8,  # 'subsample'
         "bagging_seed": 2019,
 
         # 'min_split_gain': 0.0,
-        "lambda_l1": 0.8,
-        "lambda_l2": 0.6,
+        "lambda_l1": 0.95,
+        "lambda_l2": 0.1,
 
         "boosting": "gbdt",
         'num_class': classify_type,  # 199 possible places
@@ -499,7 +499,7 @@ if __name__ == '__main__':
 
     if TRAIN_OFFLINE:
         if os.path.exists(path):
-            train_basetable = pd.read_csv(path)
+            train_basetable = pd.read_csv(path)[:220]
         else:
             train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
             outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
