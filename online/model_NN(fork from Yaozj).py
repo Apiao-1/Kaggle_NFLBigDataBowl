@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, train_test_split
 from keras.layers import BatchNormalization
 from keras.optimizers import Adam
 from keras.layers import Dense, Input, Dropout
@@ -10,11 +10,15 @@ from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
 import datetime
 import warnings
 import gc
+import matplotlib.pyplot as plt
+import seaborn as sns
+sns.set()
 
 warnings.filterwarnings("ignore")
 
 pd.set_option('display.max_columns', 200)
 pd.set_option('display.max_rows', 150)
+pd.set_option('max_colwidth',200)
 
 
 def map_weather(txt):
@@ -275,8 +279,8 @@ def create_features(df, deploy=False):
         df['GameWeather_dense'] = df['GameWeather_process'].apply(map_weather)
         add_new_feas.append('GameWeather_dense')
 
-        df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x)).astype("object")
-        add_new_feas.append("Dir_ob")
+        # df["Dir_ob"] = df["Dir"].apply(lambda x: orientation_to_cat(x))
+        # add_new_feas.append("Dir_ob")
 
         df["Orientation_sin"] = df["Orientation"].apply(lambda x: np.sin(x / 360 * 2 * np.pi))
         df["Orientation_cos"] = df["Orientation"].apply(lambda x: np.cos(x / 360 * 2 * np.pi))
@@ -334,16 +338,18 @@ def create_features(df, deploy=False):
 def process_two(t_):
     t_['fe1'] = pd.Series(np.sqrt(np.absolute(np.square(t_.X.values) + np.square(t_.Y.values))))
     t_['fe5'] = np.square(t_['S'].values) + 2 * t_['A'].values * t_['Dis'].values  # N
-    # t_['fe7'] = np.arccos(np.clip(t_['X'].values / t_['Y'].values, -1, 1))  # N
+    t_['fe7'] = np.arccos(np.clip(t_['X'].values / t_['Y'].values, -1, 1))  # N
     t_['fe8'] = t_['S'].values / np.clip(t_['fe1'].values, 0.6, None)
     radian_angle = (90 - t_['Dir']) * np.pi / 180.0
     t_['fe10'] = np.abs(t_['S'] * np.cos(radian_angle))
     t_['fe11'] = np.abs(t_['S'] * np.sin(radian_angle))
     t_["nextS"] = t_["S"] + t_["A"]
+    t_["nextSv"] = t_["nextS"] * np.cos(radian_angle)
+    t_["nextSh"] = t_["nextS"] * np.sin(radian_angle)
     t_["Sv"] = t_["S"] * np.cos(radian_angle)
-    # t_["Sh"] = t_["S"] * np.sin(radian_angle)
+    t_["Sh"] = t_["S"] * np.sin(radian_angle)
     t_["Av"] = t_["A"] * np.cos(radian_angle)
-    # t_["Ah"] = t_["A"] * np.sin(radian_angle)
+    t_["Ah"] = t_["A"] * np.sin(radian_angle)
     t_["diff_ang"] = t_["Dir"] - t_["Orientation"]
     return t_
 
@@ -466,6 +472,76 @@ def predict(x_te):
 
     return y_pred
 
+import lightgbm as lgb
+def feature_importance(X,y):
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=0)
+    y_train = np.argmax(y_train, axis=1)
+    y_val = np.argmax(y_val, axis=1)
+    trn_data = lgb.Dataset(X_train, label=y_train)
+    val_data = lgb.Dataset(X_val, label=y_val)
+
+    params = {
+        # 'n_estimators': 500,
+        'learning_rate': 0.1,
+
+        # 'num_leaves': 32,  # Original 50
+        'max_depth': 5,
+
+        'min_data_in_leaf': 10,  # min_child_samples
+        # 'max_bin': 58,
+        'min_child_weight': 19,
+
+        "feature_fraction": 0.65,  # 0.9 colsample_bytree
+        # "bagging_freq": 1,
+        "bagging_fraction": 0.9,  # 'subsample'
+        "bagging_seed": 2019,
+
+        # 'min_split_gain': 0.0,
+        "lambda_l1": 0.95,
+        "lambda_l2": 0.1,
+
+        "boosting": "gbdt",
+        'num_class': classify_type,  # 199 possible places
+        # 'num_class': 199,  # 199 possible places
+        'objective': 'multiclass',
+        "metric": "None",
+        # "metric": "multi_logloss",
+        "verbosity": -1,
+        "seed": 2019,
+    }
+    num_round = 10000
+    params['learning_rate'] = 0.1
+    model = lgb.train(params, trn_data, num_round, valid_sets=[trn_data, val_data], verbose_eval=2000,
+                      early_stopping_rounds=100, feval=crps_eval)
+    feature_importance = model.feature_importance(importance_type="gain")
+    fscores = pd.Series(feature_importance, X_train.columns).sort_values(ascending=False)
+    fscores.plot(kind='bar', title='Feature Importance(importance_type="gain")', figsize=(20, 10))
+    plt.ylabel('Feature Importance Score')
+    plt.show()
+    fscores_rate = 100 * (feature_importance / max(feature_importance))
+    fscores = pd.Series(fscores_rate, X_train.columns).sort_values(ascending=False)
+    fscores.plot(kind='bar', title='Feature Importance(importance_type="gain")', figsize=(20, 10))
+    plt.ylabel('Feature Importance Score')
+    plt.show()
+    # y_pred = model.predict(X_val, num_iteration=model.best_iteration)
+    # crps = metric_crps(y_true, y_pred)
+    gc.collect()
+    return
+
+def crps_eval(y_pred, dataset, is_higher_better=False):
+    labels = dataset.get_label()
+    y_true = np.zeros((len(labels), classify_type))
+    for i, v in enumerate(labels):
+        y_true[i, int(v):] = 1
+    y_pred = y_pred.reshape(-1, classify_type, order='F')
+    y_pred = np.clip(y_pred.cumsum(axis=1), 0, 1)
+    return 'crps', np.mean((y_pred - y_true) ** 2), False
+
+def metric_crps(y_true, y_pred):
+    y_true = np.clip(np.cumsum(y_true, axis=1), 0, 1)
+    y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+    return ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * y_true.shape[0])
+
 
 TRAIN_OFFLINE = False
 CLASSIFY_NEGITAVE = -14  # must < 0
@@ -514,6 +590,37 @@ if __name__ == '__main__':
 
     X.drop(['GameId', 'PlayId', 'Yards'], axis=1, inplace=True)
 
+    # # feature_importance(X, y)
+    #
+    # # X.drop(columns=['Dir_ob'], inplace=True)
+    # sns.set(rc={'figure.figsize': (100, 100)})
+    # corr = X.corr()
+    # plt.figure()
+    # ax = sns.heatmap(corr, linewidths=.5, annot=True, cmap="YlGnBu", fmt='.1g')
+    # plt.show()
+    #
+    # print(X.shape)
+    # print(corr.shape)
+    # # Drop highly correlated features (37->28)
+    # columns = np.full((corr.shape[0],), True, dtype=bool)
+    # for i in range(corr.shape[0]):
+    #     for j in range(i + 1, corr.shape[0]):
+    #         if corr.iloc[i, j] >= 0.95:
+    #             if columns[j]:
+    #                 columns[j] = False
+    # # print(corr.columns.values)
+    # # ret_list = list(set(corr.columns.values) ^ set(X.columns.values))
+    # # print(ret_list)
+    # feature_columns = X.columns[columns].values
+    # drop_columns = X.columns[columns == False].values
+    # # drop_columns = ['def_max_dist' 'def_X_mean' 'def_X_median' 'def_X_q80' 'def_X_q30','tm_ptp_dist' 'X' 'YardLine' 'fe1']
+    # # print(feature_columns)
+    # print(drop_columns)
+    # X = X[feature_columns]
+    # print("After del highly correlated features: ", X.shape)
+    #
+    # # feature_importance(X,y)
+
     scaler = StandardScaler()
     X = scaler.fit_transform(X)
 
@@ -521,7 +628,7 @@ if __name__ == '__main__':
     models = []
     mean_crps_csv = []
 
-    for k in range(7):
+    for k in range(5):
         #     for k in range(5):
         #         kfold = KFold(5, random_state=42 + k, shuffle=True)
         kfold = KFold(9, random_state=2019 + 17 * k, shuffle=True)
@@ -542,41 +649,43 @@ if __name__ == '__main__':
 
     print("mean crps is %f" % np.mean(mean_crps_csv))
 
-    # if TRAIN_OFFLINE == False:
-    #     from kaggle.competitions import nflrush
-    #
-    #     env = nflrush.make_env()
-    #     iter_test = env.iter_test()
-    #
-    #     for (test_df, sample_prediction_df) in iter_test:
-    #         basetable = create_features(test_df, deploy=True)
-    #         basetable = process_two(basetable)
-    #         Yards_limit = basetable['Yards_limit'][0]
-    #
-    #         basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
-    #         scaled_basetable = scaler.transform(basetable)
-    #
-    #         y_pred = predict(scaled_basetable)
-    #         y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-    #
-    #         y_0 = np.zeros((len(y_pred), 99 + CLASSIFY_NEGITAVE))
-    #         y_pred = np.concatenate((y_0, y_pred), axis=1)
-    #         y_1 = np.ones((len(y_pred), 99 - CLASSIFY_POSTIVE))
-    #         y_pred = np.concatenate((y_pred, y_1), axis=1)
-    #
-    #         y_pred[:, (99 + int(Yards_limit)):] = 1
-    #         # print(99 + int(Yards_limit))
-    #
-    #         # print(type(y_pred),len(y_pred))
-    #         #         for index,item in enumerate(y_pred):
-    #         #             if item<0.01:
-    #         #                 y_pred[index] = 0.0
-    #         #             elif item>0.99:
-    #         #                 y_pred[index] = 1.0
-    #         #             else:
-    #         #                 y_pred[index] = y_pred[index]
-    #
-    #         preds_df = pd.DataFrame(data=y_pred, columns=sample_prediction_df.columns)
-    #         env.predict(preds_df)
-    #
-    #     env.write_submission_file()
+    if TRAIN_OFFLINE == False:
+        from kaggle.competitions import nflrush
+
+        env = nflrush.make_env()
+        iter_test = env.iter_test()
+
+        for (test_df, sample_prediction_df) in iter_test:
+            basetable = create_features(test_df, deploy=True)
+            basetable = process_two(basetable)
+            Yards_limit = basetable['Yards_limit'][0]
+
+            basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
+
+            basetable = basetable[feature_columns]
+            scaled_basetable = scaler.transform(basetable)
+
+            y_pred = predict(scaled_basetable)
+            y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
+
+            y_0 = np.zeros((len(y_pred), 99 + CLASSIFY_NEGITAVE))
+            y_pred = np.concatenate((y_0, y_pred), axis=1)
+            y_1 = np.ones((len(y_pred), 99 - CLASSIFY_POSTIVE))
+            y_pred = np.concatenate((y_pred, y_1), axis=1)
+
+            y_pred[:, (99 + int(Yards_limit)):] = 1
+            # print(99 + int(Yards_limit))
+
+            # print(type(y_pred),len(y_pred))
+            #         for index,item in enumerate(y_pred):
+            #             if item<0.01:
+            #                 y_pred[index] = 0.0
+            #             elif item>0.99:
+            #                 y_pred[index] = 1.0
+            #             else:
+            #                 y_pred[index] = y_pred[index]
+
+            preds_df = pd.DataFrame(data=y_pred, columns=sample_prediction_df.columns)
+            env.predict(preds_df)
+
+        env.write_submission_file()
