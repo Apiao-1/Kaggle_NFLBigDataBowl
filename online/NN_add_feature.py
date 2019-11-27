@@ -816,7 +816,7 @@ classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
 
 if __name__ == '__main__':
     if TRAIN_OFFLINE:
-        train = pd.read_csv('../input/train.csv', dtype={'WindSpeed': 'object'})
+        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})
     else:
         train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
         # train.loc[train['Season'] == 2017, 'S'] = (train['S'][train['Season'] == 2017] - 2.4355) / 1.2930 * 1.4551 + 2.7570
