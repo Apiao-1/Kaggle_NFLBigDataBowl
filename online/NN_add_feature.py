@@ -571,6 +571,8 @@ def process_two(t_):
     t_['fe10'] = np.abs(t_['S'] * np.cos(radian_angle))
     t_['fe11'] = np.abs(t_['S'] * np.sin(radian_angle))
     t_["nextS"] = t_["S"] + t_["A"]
+    t_["nextSv"] = t_["nextS"] * np.cos(radian_angle)
+    t_["nextSh"] = t_["nextS"] * np.sin(radian_angle)
     t_["Sv"] = t_["S"] * np.cos(radian_angle)
     t_["Sh"] = t_["S"] * np.sin(radian_angle)
     t_["Av"] = t_["A"] * np.cos(radian_angle)
@@ -865,7 +867,7 @@ if __name__ == '__main__':
     # # drop_columns = X.columns[columns == False].values
     # # drop_columns = ['def_max_dist' 'def_X_mean' 'def_X_median' 'def_X_q80' 'def_X_q30','tm_ptp_dist' 'X' 'YardLine' 'fe1']
     # drop_columns = ['def_max_dist','def_X_mean','def_X_median','def_X_q30','tm_ptp_dist','X', 'YardLine','rusher_X-blue_line','defends','defenda','attacks','attacka']
-    # # drop_columns = ['YardLine']
+    # drop_columns = ['tm_min_dist', 'back_oriented_down_field','back_moving_down_field']
     # X.drop(drop_columns, axis=1, inplace=True)
     # ### print(feature_columns)
     # ### X = X[feature_columns]
