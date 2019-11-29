@@ -426,11 +426,16 @@ def preprocess(train):
 
 if __name__ == '__main__':
     # a = np.zeros((1,199))
-    # train = pd.read_csv('../data/train.csv')
-    train = pd.read_csv('../cache_feature.csv')
-    train['Yards_limit'] = 110 - train['YardLine']
+    df = pd.read_csv('../data/train.csv')
+    # train = pd.read_csv('../cache_feature.csv')
+    # train['Yards_limit'] = 110 - train['YardLine']
     # print(train.loc[train['Yards_limit'] < train['Yards']])
-    print(train.loc[train['YardLine'] >= 100 ])
+    # train['1'] = train['YardLine'] - train['X']
+    # Rusher距QB的距离，训练集23171 中有23290个QB，待确认缺失数据的处理
+    print(df.groupby('PlayId')['Position'].apply(lambda s: 'QB' in s.values).value_counts())
+
+    # train['2'] = train['YardLine'] + train['Distance'] - train['X']
+    # print(train['2'].value_counts())
 
     # print(train[train['GameId']==2017090700].groupby('PlayId').apply[['GameId','PlayId','Yards','YardLine','Down','GameClock','PossessionTeam']])
     # train = preprocess(train)
