@@ -10,9 +10,6 @@ from keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
 import datetime
 import warnings
 import gc
-import matplotlib.pyplot as plt
-import seaborn as sns
-sns.set()
 
 warnings.filterwarnings("ignore")
 
@@ -144,6 +141,34 @@ def create_features(df, deploy=False):
 
         return carriers
 
+
+    def qb_features(df):
+        qb = df[df['Position'] == 'QB'][['GameId', 'PlayId', 'X', 'Y']]
+        qb.columns = ['GameId', 'PlayId','qbX', 'qbY']
+        qb.drop_duplicates(['GameId', 'PlayId'],inplace=True)
+        defense_qb = pd.merge(df, qb, on=['GameId', 'PlayId'], how='inner')
+
+        carriers = df[df['NflId'] == df['NflIdRusher']][['GameId', 'PlayId','Team', 'X', 'Y']]
+        carriers.columns = ['GameId', 'PlayId', 'RusherTeam', 'rushX', 'rushY']
+        defense_qb = pd.merge(defense_qb, carriers, on=['GameId', 'PlayId'], how='inner')
+
+        defense_qb['qbX'].fillna(defense_qb['rushX'])
+        defense_qb['qbY'].fillna(defense_qb['rushY'])
+
+        defense_qb = defense_qb[defense_qb['Team'] != defense_qb['RusherTeam']][['GameId', 'PlayId', 'X', 'Y', 'qbX', 'qbY','rushX', 'rushY']]
+        defense_qb['dist_rusher_qb'] = defense_qb[['rushX', 'rushY', 'qbX', 'qbY']].apply(lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
+        # defense_qb['def_dist_to_qb'] = defense_qb[['X', 'Y', 'qbX', 'qbY']].apply(
+        #     lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
+        defense_qb = defense_qb[['GameId', 'PlayId','dist_rusher_qb']]
+        # defense_qb = defense_qb.groupby(['GameId', 'PlayId','dist_rusher_qb']) \
+        #     .agg({'def_dist_to_qb': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,'mad', np.ptp],
+        #           }).reset_index()
+        # defense_qb.columns = ['GameId', 'PlayId', 'dist_rusher_qb', 'def_min_qb', 'def_max_qb', 'def_mean_qb', 'def_std_qb',
+        #                      'def_skew_qb', 'def_medn_qb', 'def_q80_qb', 'def_q30_qb', 'def_kurt_qb',
+        #                      'def_mad_qb', 'def_ptp_qb',
+        #                      ]
+        return defense_qb
+
     def features_relative_to_back(df, carriers):
         player_distance = df[['GameId', 'PlayId', 'NflId', 'X', 'Y']]
         player_distance = pd.merge(player_distance, carriers, on=['GameId', 'PlayId'], how='inner')
@@ -179,13 +204,17 @@ def create_features(df, deploy=False):
             lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
         defense_d = defense_d.groupby(['GameId', 'PlayId']) \
             .agg({'def_dist_to_back': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,'mad', np.ptp],
-                  'X': ['mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp],
+                  'X': ['min', 'max','mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp],
+                  'Y': ['min', 'max','mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp],
                   }).reset_index()
         defense_d.columns = ['GameId', 'PlayId', 'def_min_dist', 'def_max_dist', 'def_mean_dist', 'def_std_dist',
                              'def_skew_dist', 'def_medn_dist', 'def_q80_dist', 'def_q30_dist', 'def_kurt_dist',
                              'def_mad_dist', 'def_ptp_dist',
-                             'def_X_mean', 'def_X_std', 'def_X_skew', 'def_X_median', 'def_X_q80', 'def_X_q30',
-                             'def_X_kurt', 'def_X_mad', 'def_X_ptp']
+                             'def_X_min','def_X_max','def_X_mean', 'def_X_std', 'def_X_skew', 'def_X_median', 'def_X_q80', 'def_X_q30',
+                             'def_X_kurt', 'def_X_mad', 'def_X_ptp',
+                             'def_Y_min','def_Y_max','def_Y_mean', 'def_Y_std', 'def_Y_skew', 'def_Y_median', 'def_Y_q80', 'def_Y_q30',
+                             'def_Y_kurt', 'def_Y_mad', 'def_Y_ptp',
+                             ]
 
         defense_s = defense[defense['Team'] != defense['RusherTeam']][['GameId', 'PlayId', 'S', 'A']]
         defense_s['SA'] = defense_s[['S', 'A']].apply(lambda x: x[0] + x[1], axis=1)
@@ -216,13 +245,16 @@ def create_features(df, deploy=False):
         team_d['def_dist_to_back'] = team_d[['X', 'Y', 'RusherX', 'RusherY']].apply(
             lambda x: euclidean_distance(x[0], x[1], x[2], x[3]), axis=1)
         team_d = team_d.groupby(['GameId', 'PlayId']) \
-            .agg({'def_dist_to_back': ['max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,'mad', np.ptp]},
-                 # 'X': ['mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad',np.ptp],
+            .agg({'def_dist_to_back': ['max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt,'mad', np.ptp],
+                  'X': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp],
+                  'Y': ['min', 'max', 'mean', 'std', 'skew', 'median', q80, q30, pd.DataFrame.kurt, 'mad', np.ptp],
+                  },
         ).reset_index()
         team_d.columns = ['GameId', 'PlayId',
-                          'tm_max_dist', 'tm_mean_dist', 'tm_std_dist',
-                          'tm_skew_dist', 'tm_medn_dist', 'tm_q80_dist', 'tm_q30_dist', 'tm_kurt_dist', 'tm_mad_dist',
-                          'tm_ptp_dist']
+                          'tm_max_dist', 'tm_mean_dist', 'tm_std_dist','tm_skew_dist', 'tm_medn_dist', 'tm_q80_dist', 'tm_q30_dist', 'tm_kurt_dist', 'tm_mad_dist','tm_ptp_dist',
+                          'tm_X_min', 'tm_X_max','tm_X_mean', 'tm_X_std', 'tm_X_skew', 'tm_X_median', 'tm_X_q80', 'tm_X_q30','tm_X_kurt', 'tm_X_mad', 'tm_X_ptp',
+                          'tm_Y_min', 'tm_Y_max','tm_Y_mean', 'tm_Y_std', 'tm_Y_skew', 'tm_Y_median', 'tm_Y_q80', 'tm_Y_q30','tm_Y_kurt', 'tm_Y_mad', 'tm_Y_ptp',
+                        ]
 
         team_d_drop_rusher = team[(team['Team'] == team['RusherTeam']) & (team['NflId'] != team['NflIdRusher'])][['GameId', 'PlayId', 'X', 'Y', 'RusherX', 'RusherY']]
         team_d_drop_rusher['def_dist_to_back'] = team_d_drop_rusher[['X', 'Y', 'RusherX', 'RusherY']].apply(
@@ -327,10 +359,11 @@ def create_features(df, deploy=False):
 
         return static_features
 
-    def combine_features(relative_to_back, defense, team, static, deploy=deploy):
+    def combine_features(relative_to_back, defense, team, static, qb, deploy=deploy):
         df = pd.merge(relative_to_back, defense, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, team, on=['GameId', 'PlayId'], how='inner')
         df = pd.merge(df, static, on=['GameId', 'PlayId'], how='inner')
+        df = pd.merge(df, qb, on=['GameId', 'PlayId'], how='inner')
         df = naodong_feature(df)
 
 
@@ -369,10 +402,10 @@ def create_features(df, deploy=False):
     back_feats = back_features(df)
     rel_back = features_relative_to_back(df, back_feats)
     def_feats = defense_features(df)
-    # qb_feats = qb_features(df)
+    qb_feats = qb_features(df)
     tm_feats = team_features(df)
     static_feats = static_features(df)
-    basetable = combine_features(rel_back, def_feats, tm_feats, static_feats, deploy=deploy)
+    basetable = combine_features(rel_back, def_feats, tm_feats, static_feats, qb_feats, deploy=deploy)
 
     # print(df.shape, back_feats.shape, rel_back.shape, def_feats.shape, static_feats.shape, basetable.shape)
 
@@ -453,7 +486,7 @@ def get_model(x_tr, y_tr, x_val, y_val):
     x = Dropout(0.5)(x)
     x = BatchNormalization()(x)
     if classify_type < 128:
-        x = Dense(128, activation='elu')(x)
+        x = Dense(256, activation='elu')(x)
         x = Dropout(0.5)(x)
         x = BatchNormalization()(x)
     # if classify_type < 64:
@@ -486,22 +519,6 @@ def get_model(x_tr, y_tr, x_val, y_val):
     y_valid = y_val
     y_true = np.clip(np.cumsum(y_valid, axis=1), 0, 1)
     y_pred = np.clip(np.cumsum(y_pred, axis=1), 0, 1)
-
-    # x_val['Yards_limit']
-
-    # y_0 = np.zeros((len(y_pred), 85))
-    # y_pred = np.concatenate((y_pred, y_0), axis=1)
-    # print(y_pred.shape)
-
-    #     y_pred[y_pred<0.01] = 0.0
-    #     y_pred[y_pred>0.99] = 1.0
-    #     for index,item in enumerate(y_pred):
-    #         if item<0.001:
-    #             y_pred[index] = 0.0
-    #         elif item>0.999:
-    #             y_pred[index] = 1.0
-    #         else:
-    #             y_pred[index] = y_pred[index]
     val_s = ((y_true - y_pred) ** 2).sum(axis=1).sum(axis=0) / (199 * x_val.shape[0])
     crps = np.round(val_s, 8)
     gc.collect()
@@ -529,29 +546,15 @@ classify_type = CLASSIFY_POSTIVE - CLASSIFY_NEGITAVE + 1
 
 if __name__ == '__main__':
     if TRAIN_OFFLINE:
-        train = pd.read_csv('../data/train.csv', dtype={'WindSpeed': 'object'})[:2200]
+        train = pd.read_csv('../data/train.csv')[:2200]
     else:
-        train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv', dtype={'WindSpeed': 'object'})
-        # train.loc[train['Season'] == 2017, 'S'] = (train['S'][train['Season'] == 2017] - 2.4355) / 1.2930 * 1.4551 + 2.7570
+        train = pd.read_csv('/kaggle/input/nfl-big-data-bowl-2020/train.csv')
+        # train = train[train.Season < 2019]
 
     outcomes = train[['GameId', 'PlayId', 'Yards']].drop_duplicates()
 
     train_basetable = create_features(train, False)
     train_basetable = process_two(train_basetable)
-
-    # drop test
-    # print("before drop feature:", train_basetable.shape)
-    # columns = ['def_max_dist']
-    # columns = ['def_mean_dist']
-    # columns = ['def_std_dist']
-    # columns = ['def_skew_dist']
-    # columns = ['def_medn_dist']
-    # columns = ['def_q80_dist']
-    # columns = ['def_q30_dist']
-    # columns = ['def_kurt_dist']
-
-    # train_basetable.drop(columns=columns, inplace=True)
-    # print("after drop feature:", train_basetable.shape)
 
     train = train_basetable.loc[(train_basetable['Yards'] >= CLASSIFY_NEGITAVE) & (train_basetable['Yards'] <= CLASSIFY_POSTIVE)]
 
@@ -610,7 +613,6 @@ if __name__ == '__main__':
 
             basetable.drop(['GameId', 'PlayId'], axis=1, inplace=True)
 
-            # basetable = basetable[feature_columns]
             scaled_basetable = scaler.transform(basetable)
 
             y_pred = predict(scaled_basetable)
@@ -622,16 +624,6 @@ if __name__ == '__main__':
             y_pred = np.concatenate((y_pred, y_1), axis=1)
 
             y_pred[:, (99 + int(Yards_limit)):] = 1
-            # print(99 + int(Yards_limit))
-
-            # print(type(y_pred),len(y_pred))
-            #         for index,item in enumerate(y_pred):
-            #             if item<0.01:
-            #                 y_pred[index] = 0.0
-            #             elif item>0.99:
-            #                 y_pred[index] = 1.0
-            #             else:
-            #                 y_pred[index] = y_pred[index]
 
             preds_df = pd.DataFrame(data=y_pred, columns=sample_prediction_df.columns)
             env.predict(preds_df)
