@@ -568,6 +568,8 @@ def process_two(t_):
     t_['fe10'] = np.abs(t_['S'] * np.cos(radian_angle))
     t_['fe11'] = np.abs(t_['S'] * np.sin(radian_angle))
     t_["nextS"] = t_["S"] + t_["A"]
+    t_["nextSv"] = t_["nextS"] * np.cos(radian_angle)
+    t_["nextSh"] = t_["nextS"] * np.sin(radian_angle)
     t_["Sv"] = t_["S"] * np.cos(radian_angle)
     t_["Sh"] = t_["S"] * np.sin(radian_angle)
     t_["Av"] = t_["A"] * np.cos(radian_angle)
@@ -622,20 +624,20 @@ def GBM_evaluate(min_data_in_leaf, min_child_weight, feature_fraction, max_depth
         'learning_rate': 0.1,
 
         # 'num_leaves': 32,  # Original 50
-        'max_depth': 7,
+        'max_depth': 5,
 
         'min_data_in_leaf': 49,  # min_child_samples
         # 'max_bin': 58,
         'min_child_weight': 19,
 
-        "feature_fraction": 0.75,  # 0.9 colsample_bytree
+        "feature_fraction": 0.56,  # 0.9 colsample_bytree
         "bagging_freq": 9,
-        "bagging_fraction": 0.85,  # 'subsample'
+        "bagging_fraction": 0.9,  # 'subsample'
         "bagging_seed": 2019,
 
         # 'min_split_gain': 0.0,
-        "lambda_l1": 0.63,
-        "lambda_l2": 0.22,
+        "lambda_l1": 0.21,
+        "lambda_l2": 0.65,
 
         "boosting": "gbdt",
         'num_class': classify_type,  # 199 possible places
@@ -761,14 +763,14 @@ if __name__ == '__main__':
 
     # 调参范围
     adj_params = {
-        'min_child_weight': (3, 20),
+        'min_child_weight': (3, 50),
         'feature_fraction': (0.4, 1),
-        'max_depth': (5, 15),
+        'max_depth': (4, 15),
         'bagging_fraction': (0.5, 1),
         'bagging_freq': (1, 10),
         'lambda_l2': (0.1, 1),
         'lambda_l1': (0.1, 1),
-        'min_data_in_leaf': (1, 50)
+        'min_data_in_leaf': (1, 150)
     }
 
     # 调用贝叶斯优化
